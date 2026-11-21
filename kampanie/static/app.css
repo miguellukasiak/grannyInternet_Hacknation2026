@@ -239,3 +239,41 @@ tr.lone td.id { color: var(--ink-2); }
 .more > summary:hover { color: var(--ink); }
 .more[open] > summary { margin-bottom: 6px; }
 .text-more { margin-top: 20px; }
+
+/* the expandable graph (graf.js): campaigns first, a click opens one */
+.g-live { position: relative; padding: 0; overflow: hidden; }
+.g-live svg { height: min(72vh, 760px); cursor: grab; touch-action: none; user-select: none; }
+.g-live svg:active { cursor: grabbing; }
+.g-tools { position: absolute; top: 12px; left: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+.g-info { border-top: 1px solid var(--rule); padding: 16px clamp(16px, 2vw, 28px); font-size: 15px; min-height: 5em; overflow-wrap: anywhere; }
+.g-info h3 { margin: 0 0 6px; font-size: 18px; }
+.g-info p { margin: 0 0 6px; color: var(--ink-2); }
+.g-info a { color: var(--red-ink); font-weight: 700; }
+.g-n { cursor: pointer; outline: none; }
+.g-n .g-s { stroke-width: 2.5; }
+.g-n:focus-visible .g-s, .g-n:hover .g-s { stroke: var(--red); stroke-width: 4; }
+.g-n.hub .g-s { fill: var(--ink); stroke: var(--ink); }
+.g-n.hub.open .g-s { fill: var(--red); stroke: var(--red); }
+.g-n.hi .g-s { fill: var(--red); stroke: var(--red); }
+.g-n.mid .g-s { fill: var(--card); stroke: var(--red); }
+.g-n.ok .g-s { fill: var(--card); stroke: var(--ink-2); }
+.g-n.mat.open .g-s { stroke-width: 5; }
+.g-n.trait .g-s { fill: var(--paper-2); stroke: var(--ink-2); stroke-width: 1.5; }
+.g-in { font: 800 11px/1 var(--num); fill: var(--paper); text-anchor: middle; pointer-events: none; }
+.g-lb { font: 12px/1 var(--font); fill: var(--ink-2); pointer-events: none; paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; }
+.g-n.hub .g-lb { fill: var(--ink); font-weight: 700; }
+.g-e { stroke: var(--ink); opacity: .45; }
+.g-e.soft { stroke: var(--ink-2); stroke-dasharray: 6 5; }
+.g-e.trait { stroke: var(--ink-2); stroke-width: 1; }
+.g-e:hover { stroke: var(--red); opacity: 1; }
+.legend .camp { background: var(--ink); border-color: var(--ink); }
+.legend .trait { width: 12px; height: 12px; border-radius: 2px; border: 2px solid var(--ink-2); background: var(--paper-2); }
+
+/* the material table's column filters */
+.tf-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 0 14px; font-size: 15px; }
+.tf-form b { font-family: var(--num); }
+.tf-form a { color: var(--red-ink); font-weight: 700; }
+.tf td { padding: 10px 8px 10px 0; border-bottom: 2px solid var(--ink); }
+.tf select, .tf input { width: 100%; min-width: 8em; font: 400 14px/1.3 var(--font); color: var(--ink); background: var(--card);
+  border: 0; border-radius: 0; padding: 6px 8px; box-shadow: inset 0 0 0 1.5px var(--rule); }
+.tf select:focus, .tf input:focus { outline: none; box-shadow: inset 0 0 0 2.5px var(--ink); }

@@ -233,6 +233,55 @@ class Paging(unittest.TestCase):
         finally:
             app.state["base"] = saved
 
+    def test_material_column_filters(self):
+        import app
+        ms = [k.Material(id="m0", name="m0", persons=["Jan Kowalski"], topics=["hazard"], landing=["kasyno.top"], missing=["x"]),
+              k.Material(id="m1", name="m1", claimed=["Orlen"], landing=["oferta.pl"]),
+              k.Material(id="m2", name="m2", topics=["hazard"], landing=["gra.top"])]
+        camp = {"id": "K1", "members": ["m0", "m2"]}
+        where, pts = {"m0": camp, "m2": camp}, {"m0": 5, "m1": 2, "m2": 0}
+        ids = lambda q: [m.id for m in app.mat_filter(q, ms, where, pts)[0]]
+        self.assertEqual(ids({}), ["m0", "m1", "m2"])
+        self.assertEqual(ids({"fd": [".top"], "ft": ["hazard"]}), ["m0", "m2"])  # filters add up
+        self.assertEqual(ids({"fw": ["hi"]}), ["m0"])
+        self.assertEqual(ids({"fk": ["nowy"]}), ["m1"])
+        self.assertEqual(ids({"fk": ["w"], "fb": ["nie"]}), ["m2"])
+        self.assertEqual(ids({"fo": ["Orlen"]}), ["m1"])
+        self.assertEqual(ids({"ft": ["bez tematu"]}), ["m1"])
+        _, heads, tools = app.mat_filter({"fo": ['<b>"x'], "k": ["2"], "zle": ["1"]}, ms, where, pts)
+        self.assertIn('<option value="&lt;b&gt;&quot;x" selected>', heads)  # the asked value stays, escaped
+        self.assertIn('<option value="Jan Kowalski">Jan Kowalski (1)</option>', heads)
+        self.assertIn('name="k" value="2"', tools)  # the campaign list keeps its page
+        self.assertNotIn("zle", tools)
+        self.assertIn("Pasuje <b>0</b> z 3", tools)
+        self.assertIn("fo=x", app.pager({"fo": ["x"]}, "s", 1, 2, "/"))  # the pages keep the filters
+
+    def test_expandable_graph(self):
+        import app
+        ms = [k.Material(id="m0", name="m0", trackers=["piksel Meta 1"], persons=["Jan Kowalski"]),
+              k.Material(id="m1", name="m1", trackers=["piksel Meta 1"]),
+              k.Material(id="m2", name="m2", trackers=["piksel Meta 2"], persons=["Jan Kowalski"]),
+              k.Material(id="m3", name="m3", trackers=["piksel Meta 2"])]
+        base = k.Base(ms)
+        saved = app.state["base"], app.state["campaigns"]
+        app.state.update(base=base, campaigns=base.campaigns())
+        try:  # two campaigns by their pixels; one person in both is too weak to merge them, enough for a dashed line
+            top = app.graph_data({})
+            self.assertEqual(sorted(h["n"] for h in top["hubs"]), [2, 2])
+            self.assertEqual(len(top["links"]), 1)
+            self.assertIn("te same osoby: Jan Kowalski", top["links"][0]["why"])
+            one = app.graph_data({"c": [top["hubs"][0]["id"]]})
+            self.assertEqual(len(one["members"]), 2)
+            self.assertEqual(len(one["links"]), 1)
+            m0 = app.graph_data({"m": ["m0"]})
+            shared = {(t["kind"], t["name"]): [o["id"] for o in t["others"]] for t in m0["traits"]}
+            self.assertEqual(shared, {("identyfikator", "piksel Meta 1"): ["m1"], ("osoba", "Jan Kowalski"): ["m2"]})
+            self.assertEqual(m0["traits"][0]["kind"], "identyfikator")  # IDs first
+            self.assertIn("error", app.graph_data({"m": ["nie-ma"]}))
+            self.assertIn("error", app.graph_data({"c": ["K999"]}))
+        finally:
+            app.state.update(base=saved[0], campaigns=saved[1])
+
     def test_hosting_firms_of_a_campaign(self):
         import app
         book = {"192.0.2.4": ({"country": {"iso_code": "SG"}}, {"autonomous_system_organization": "Tani Hosting"}),

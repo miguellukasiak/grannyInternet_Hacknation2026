@@ -22,6 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 import maxminddb
+import numpy as np
 
 import baza
 import kampanie as k
@@ -318,7 +319,7 @@ def pager(query, key: str, n: int, last: int, where: str, anchor: str = "") -> s
     if last == 1:
         return ""
     def go(i):  # the other list keeps its page
-        q = {x: v[0] for x, v in (query or {}).items() if x in ("k", "s", "t")} | {key: str(i)}
+        q = {x: v[0] for x, v in (query or {}).items() if x in ("k", "s", "t") + COLS} | {key: str(i)}
         return e(f"{where}?{urlencode(q)}{anchor}")
     prev = f'<a class="btn btn-line btn-sm" href="{go(n - 1)}" rel="prev">← Poprzednie</a>' if n > 1 else ""
     nxt = f'<a class="btn btn-line btn-sm" href="{go(n + 1)}" rel="next">Następne →</a>' if n < last else ""
@@ -342,9 +343,9 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
             f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
-<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=6">
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=8">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
-<script src="/static/app.js?v=2" defer></script></head>
+<script src="/static/app.js?v=4" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
 <header class="wrap top"><a class="mark" href="/"><i></i>grannyInternet <span>/ kampanie</span></a>
 <nav aria-label="Główna">{nav("/#kampanie", "Kampanie", "k")}{nav("/#materialy", "Materiały", "m")}{nav("/graf", "Graf powiązań", "g")}
@@ -405,17 +406,21 @@ def hosting(ms) -> list[str]:
         own = [ip for ip in m.ips if not k.on_cdn(ip)]
         cdn += bool(m.ips) and not own
         bare += not m.ips
-        found = set()
-        for ip in own:
-            try:
-                country, asn = ((r.get(ip) or {}) for r in _geo)
-            except ValueError:  # an address from a HAR that is not one
-                continue
-            found.add((asn.get("autonomous_system_organization") or "nieznany dostawca",
-                       (country.get("country") or {}).get("iso_code") or "?"))
-        firms.update(found)
+        firms.update({w for ip in own if (w := where_is(ip))})
     return ([f"{firm} · {cc} · {n}" for (firm, cc), n in firms.most_common()]
             + ([f"za CDN {cdn}"] if cdn else []) + ([f"bez adresu {bare}"] if bare else []))
+
+
+def where_is(ip: str):
+    """(hosting firm, country) of an address; None behind a CDN, without the files or for junk."""
+    if k.on_cdn(ip) or not geo():
+        return None
+    try:
+        country, asn = ((r.get(ip) or {}) for r in _geo)
+    except ValueError:  # an address from a HAR that is not one
+        return None
+    return (asn.get("autonomous_system_organization") or "nieznany dostawca",
+            (country.get("country") or {}).get("iso_code") or "?")
 
 
 def stamp(m, big=False) -> str:
@@ -455,6 +460,56 @@ def by_topic(query, campaigns: list, where: str, anchor: str = "") -> tuple[list
     nav = (f'<nav class="filters" aria-label="Temat kampanii"><span>Temat:</span>{link("", "wszystkie", len(campaigns))}'
            f'{"".join(link(x, x, n) for x, n in counts.most_common())}</nav>')
     return [c for c, x in zip(campaigns, topics) if not t or x == t], nav
+
+
+COLS = ("fm", "fw", "fk", "fd", "fo", "ft", "fb")  # the material table's column filters, in column order
+LEVELS = {"hi": "Wysokie ryzyko", "mid": "Podejrzane", "ok": "Brak sygnałów"}
+OPTIONS = 150  # shortcut: only the most common people and brands are listed, a search field if the full base needs more
+
+
+def mat_filter(query, ms, where, pts) -> tuple[list, str, str]:
+    """Like Excel's column filters: the materials that pass, the filter row of the table head and the form line over it."""
+    q = {x: (query or {}).get(x, [""])[0].strip()[:200] for x in COLS}
+    camp = lambda m: c["id"] if (c := where.get(m.id)) and len(c["members"]) > 1 else "nowy"
+    level = lambda m: "hi" if pts.get(m.id, 0) >= 4 else "mid" if pts.get(m.id, 0) >= 2 else "ok"
+    test = {"fm": lambda m, v: v.lower() in f"{m.id} {m.name}".lower(),
+            "fw": lambda m, v: level(m) == v,
+            "fk": lambda m, v: camp(m) == v or (v == "w" and camp(m) != "nowy"),
+            "fd": lambda m, v: any(v.lower() in d for d in m.landing),
+            "fo": lambda m, v: v in m.persons + m.claimed,
+            "ft": lambda m, v: v in m.topics or (v == "bez tematu" and not m.topics),
+            "fb": lambda m, v: bool(m.missing) == (v == "tak")}
+    got = [m for m in ms if all(test[x](m, v) for x, v in q.items() if v)]
+
+    def select(name, label, opts):
+        if q[name] and q[name] not in {v for v, _, _ in opts}:
+            opts = opts + [(q[name], q[name], 0)]  # the chosen one stays visible even when it fell off the list
+        out = "".join(f'<option value="{e(v)}"{" selected" if v == q[name] else ""}>{e(t)}{f" ({n})" if n else ""}</option>'
+                      for v, t, n in opts)
+        return (f'<td><select name="{name}" form="mf" aria-label="Filtr: {label}"><option value="">wszystkie</option>'
+                f'{out}</select></td>')
+
+    def search(name, label, hint):
+        return (f'<td><input type="search" name="{name}" form="mf" value="{e(q[name])}" placeholder="{hint}" '
+                f'aria-label="Filtr: {label}" autocomplete="off"></td>')
+    camps = Counter(camp(m) for m in ms)
+    people = Counter(x for m in ms for x in dict.fromkeys(m.persons + m.claimed))
+    topics = Counter(t for m in ms for t in (m.topics or ["bez tematu"]))
+    levels = Counter(level(m) for m in ms)
+    gaps = sum(1 for m in ms if m.missing)
+    heads = ('<tr class="tf">' + search("fm", "materiał", "szukaj")
+             + select("fw", "wstępny werdykt", [(v, t, levels[v]) for v, t in LEVELS.items()])
+             + select("fk", "kampania", [("w", "w kampanii", len(ms) - camps["nowy"]), ("nowy", "nowy wzorzec", camps["nowy"])]
+                      + [(c, c, n) for c, n in camps.items() if c != "nowy"])
+             + search("fd", "domena strony", "np. .top")
+             + select("fo", "osoby i marki", [(x, x, n) for x, n in people.most_common(OPTIONS)])
+             + select("ft", "temat", [(x, x, n) for x, n in topics.most_common()])
+             + select("fb", "braki danych", [("tak", "z brakami", gaps), ("nie", "bez braków", len(ms) - gaps)]) + "</tr>")
+    keep = "".join(f'<input type="hidden" name="{x}" value="{e(v[0])}">' for x, v in (query or {}).items() if x in ("k", "t"))
+    tools = (f'<form id="mf" class="tf-form" method="get" action="/#materialy">{keep}'
+             f'<button class="btn btn-ink btn-sm">Filtruj</button><span>Pasuje <b>{len(got)}</b> z {len(ms)}</span>'
+             + ('<a href="/#materialy">Wyczyść filtry</a>' if any(q.values()) else "") + "</form>")
+    return got, heads, tools
 
 
 def campaign_of(campaigns) -> dict:
@@ -503,11 +558,13 @@ def index(query=None) -> bytes:
     every = [c for c in campaigns if len(c["members"]) > 1]
     many, filters = by_topic(query, every, "/", "#kampanie")
     kn, klast = page_no(query, "k", len(many), PER_CAMPS)
-    sn, slast = page_no(query, "s", len(ms), PER_ROWS)
     where = campaign_of(campaigns)
-    if state.get("high", (None,))[0] is not base:  # verdicts of ~2000 took 3 s on each visit: once per base
-        state["high"] = (base, sum(1 for m in ms if k.verdict(m)[1] >= 4))
-    high = state["high"][1]
+    if state.get("pts", (None,))[0] is not base:  # verdicts of ~2000 took 3 s on each visit: once per base
+        state["pts"] = (base, {m.id: k.verdict(m)[1] for m in ms})
+    pts = state["pts"][1]
+    high = sum(1 for p in pts.values() if p >= 4)
+    shown, heads, tools = mat_filter(query, ms, where, pts)
+    sn, slast = page_no(query, "s", len(shown), PER_ROWS)
     lone = len(ms) - sum(len(c["members"]) for c in every)
     error = f'<div class="notice" role="alert">{e(state["error"])}</div>' if state["error"] else ""
     hero = f"""<section class="wrap hero"><p class="eyebrow">Kolekcjoner fejków · demonstrator</p>
@@ -538,15 +595,16 @@ wstępny werdykt, a potem trafia do kampanii albo zostaje nowym wzorcem. Przy ka
         camps = ("".join(cards) + pager(query, "k", kn, klast, "/", "#kampanie")
                  or '<p class="lead muted">Żadne dwa materiały nie mają jeszcze powiązania ≥ 0,5.</p>')
     rows = []
-    for m in ms[(sn - 1) * PER_ROWS:sn * PER_ROWS]:
+    for m in shown[(sn - 1) * PER_ROWS:sn * PER_ROWS]:
         c = where.get(m.id)
         camp = (f'<a href="{camp_href(c["id"])}">{e(c["id"])}</a>' if c and len(c["members"]) > 1
                 else '<span class="muted">nowy wzorzec</span>')
         rows.append(f"""<tr><td class="id">{mlink(m.id, '')}<small>{e(m.name) if m.name != m.id else ''}</small></td>
 <td>{stamp(m)}</td><td>{camp}</td><td>{chips(m.landing[:3])}</td><td>{chips(m.persons + m.claimed)}</td>
 <td>{chips(m.topics)}</td><td class="num">{len(m.missing) or '–'}</td></tr>""")
-    table = (f"""<div class="table"><table><thead><tr><th>Materiał</th><th>Wstępny werdykt</th><th>Kampania</th>
-<th>Domena strony</th><th>Osoby i marki</th><th>Temat</th><th>Braki danych</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
+    rows = rows or ['<tr><td colspan="7" class="muted">Żaden materiał nie pasuje do filtrów.</td></tr>']
+    table = (f"""{tools}<div class="table"><table><thead><tr><th>Materiał</th><th>Wstępny werdykt</th><th>Kampania</th>
+<th>Domena strony</th><th>Osoby i marki</th><th>Temat</th><th>Braki danych</th></tr>{heads}</thead><tbody>{''.join(rows)}</tbody></table></div>
 {pager(query, "s", sn, slast, "/", "#materialy")}"""
              if ms else '<p class="lead muted">Nic tu jeszcze nie ma.</p>')
     clear = ('<form class="rm" method="post" action="/wyczysc" data-confirm="Usunąć wszystkie materiały z bazy?">'
@@ -650,13 +708,115 @@ def graph(query=None) -> bytes:
     svg = (f'<svg viewBox="0 0 {cols * cell} {rows * cell + 20}" role="img" aria-label="Graf powiązań materiałów">'
            f'{"".join(parts)}{"".join(lines)}{"".join(nodes)}</svg>'
            f'{pager(query, "g", gn, glast, "/graf")}') if ms else '<p class="muted">Baza jest pusta.</p>'
+    t = (query or {}).get("t", [""])[0]
+    live = (f'<div class="graph g-live" data-src="/graf.json{e("?" + urlencode({"t": t}) if t else "")}" hidden>'
+            '<div class="g-tools"><button type="button" class="btn btn-line btn-sm" data-zoom="1.25">Przybliż</button>'
+            '<button type="button" class="btn btn-line btn-sm" data-zoom="0.8">Oddal</button>'
+            '<button type="button" class="btn btn-line btn-sm" data-fit>Pokaż całość</button>'
+            '<button type="button" class="btn btn-line btn-sm" data-reset>Zwiń wszystko</button></div>'
+            '<svg role="group" aria-label="Graf kampanii: kliknij kampanię albo materiał, żeby go rozwinąć"></svg>'
+            '<aside class="g-info" aria-live="polite"><p class="muted">Kliknij kampanię, żeby zobaczyć jej materiały. '
+            'Kliknij materiał, żeby zobaczyć, co dzieli z innymi.</p></aside></div>') if ms else ""
     return page("Graf powiązań", f"""<section class="wrap hero"><p class="eyebrow">Graf powiązań</p>
-<h1>Kto z kim <span>i dlaczego.</span></h1><p class="lead">Okrąg to kampania, od największych. Linia łączy
-parę z jednej kampanii o podobieństwie ≥ {num(k.FAMILY)} (w dużych kampaniach tylko najsilniejsze): im grubsza, tym silniejsza. Najedź na linię, żeby zobaczyć przesłanki, kliknij materiał, żeby go otworzyć.</p></section>
-<section class="wrap">{filters}<ul class="legend"><li><i class="hi"></i>wysokie ryzyko</li>
-<li><i></i>podejrzane</li><li><i class="ok"></i>brak sygnałów</li><li><i class="ln"></i>powiązanie</li></ul>
-<div class="graph">{svg}</div></section>""", "g")
+<h1>Kto z kim <span>i dlaczego.</span></h1><p class="lead">Na starcie same kampanie: im większa kropka, tym więcej
+materiałów. Kliknij kampanię, a rozwiną się jej materiały i łączące je przesłanki. Kliknij materiał, a pokaże, co dzieli
+z innymi (identyfikatory reklam, osoby, marki, domeny, serwer) i z jakimi kampaniami. Klik w rozwinięty węzeł go zwija. Kółko myszy przybliża, przeciąganie tła przesuwa widok.
+Przerywana linia między kampaniami to słabe podobieństwo (≥ {num(k.FAMILY)}), za słabe, by je połączyć.</p></section>
+<section class="wrap">{filters}<ul class="legend"><li><i class="camp"></i>kampania</li><li><i class="hi"></i>wysokie ryzyko</li>
+<li><i></i>podejrzane</li><li><i class="ok"></i>brak sygnałów</li><li><i class="trait"></i>wspólna cecha</li>
+<li><i class="ln"></i>powiązanie</li></ul>{live}<noscript><div class="graph">{svg}</div></noscript>
+<script src="/static/graf.js?v=3" defer></script></section>""", "g")
 
+
+TRAIT_KINDS = ("identyfikator", "osoba", "marka", "domena", "serwer", "hosting")
+_walk = {"of": None}  # what walking the graph needs, worked out once per grouping
+
+
+def walk() -> dict:
+    """Material -> campaign, trait -> materials and the weak links between campaigns, for the current grouping."""
+    base, campaigns = state["base"], state["campaigns"]
+    if _walk["of"] is not campaigns:
+        camp_of = {x: c["id"] for c in campaigns for x in c["members"]}
+        holders = {}
+        for m in base.materials:
+            for t in traits(m, base):
+                holders.setdefault(t, []).append(m.id)
+        _walk.update(of=campaigns, camp_of=camp_of, holders=holders, soft=soft_links(base, campaigns))
+    return _walk
+
+
+def traits(m, base) -> set:
+    """What a material may share with others: ad and analytics IDs, names, rare domains and servers, the hosting firm.
+    The firm is information only: one firm hosts hundreds of unrelated scams."""
+    common = base.common
+    return ({("identyfikator", x) for x in m.trackers} | {("osoba", x) for x in m.persons}
+            | {("marka", x) for x in m.claimed} | {("domena", x) for x in m.domains if ("d", x) not in common}
+            | {("serwer", x) for x in m.ips if ("i", x) not in common}
+            | {("hosting", f"{w[0]} · {w[1]}") for x in m.ips if (w := where_is(x))})
+
+
+def soft_links(base, campaigns) -> list:
+    """Campaigns whose closest members score >= FAMILY: too weak to merge them, worth a dashed line.
+    Taken from the pair scores grouping already computed, one campaign against all at a time."""
+    multi = [c for c in campaigns if len(c["members"]) > 1]
+    if not multi:
+        return []
+    s = base.matrix()
+    lab = np.full(len(base.materials), -1)
+    for i, c in enumerate(multi):
+        lab[[base.row[x] for x in c["members"]]] = i
+    out = []
+    for i, c in enumerate(multi):
+        mine = np.nonzero(lab == i)[0]
+        top = s[mine].max(0)
+        best = np.full(len(multi), -1.0)
+        later = lab > i
+        np.maximum.at(best, lab[later], top[later])
+        for j in np.nonzero(best >= k.FAMILY)[0]:
+            theirs = np.nonzero(lab == j)[0]
+            r, q = np.unravel_index(s[np.ix_(mine, theirs)].argmax(), (len(mine), len(theirs)))
+            a, b = base.materials[mine[r]], base.materials[theirs[q]]
+            out.append({"a": c["id"], "b": multi[j]["id"], "s": round(float(best[j]), 3),
+                        "why": [f"{a.id} ~ {b.id}"] + [w for _, _, w in base.compare(a, b)[1][:3]]})
+    return out
+
+
+def node(m) -> dict:
+    pts = k.verdict(m)[1]
+    return {"id": m.id, "label": (m.landing or [m.name])[0], "cls": "hi" if pts >= 4 else "mid" if pts >= 2 else "ok",
+            "campaign": walk()["camp_of"].get(m.id, "")}
+
+
+def graph_data(query) -> dict:
+    """The expandable graph: ?c= a campaign's materials, ?m= what a material shares, else the campaigns (of ?t=)."""
+    q = {x: v[0] for x, v in (query or {}).items()}
+    base, w = state["base"], walk()
+    if (cid := q.get("c")) is not None:
+        c = next((x for x in state["campaigns"] if x["id"] == cid), None)
+        if not c:
+            return {"error": "Nie ma takiej kampanii."}
+        n = len(c["members"])
+        return {"id": cid, "members": [node(base.by_id[x]) for x in c["members"] if x in base.by_id],
+                "links": [{"a": a, "b": b, "s": round(s, 3), "why": [x for _, _, x in ev[:3]]}  # strongest only, as /graf
+                          for s, a, b, ev in [p for p in c["pairs"] if p[0] >= k.FAMILY][:3 * n]]}
+    if (mid := q.get("m")) is not None:
+        m = base.by_id.get(mid)
+        if not m:
+            return {"error": "Nie ma takiego materiału."}
+        shared = sorted(((t, w["holders"][t]) for t in traits(m, base) if len(w["holders"].get(t, [])) > 1),
+                        key=lambda x: (TRAIT_KINDS.index(x[0][0]), len(x[1])))  # IDs first, then the rarest
+        return {**node(m), "href": f"/m/{quote(m.id)}", "traits": [
+            {"id": f"{kind}:{name}", "kind": kind, "name": name, "more": max(0, len(ids) - 1 - TRAIT_OTHERS),
+             "others": [node(base.by_id[x]) for x in ids if x != m.id][:TRAIT_OTHERS]}
+            for (kind, name), ids in shared[:TRAITS]]}
+    chosen = by_topic(query, [c for c in state["campaigns"] if len(c["members"]) > 1], "/graf")[0]
+    ids = {c["id"] for c in chosen}
+    return {"hubs": [{"id": c["id"], "label": c["label"], "topic": topic_of(c), "n": len(c["members"]),
+                      "family": c["family"], "href": camp_href(c["id"])} for c in chosen],
+            "links": [x for x in w["soft"] if x["a"] in ids and x["b"] in ids]}
+
+
+TRAITS, TRAIT_OTHERS = 10, 8  # per material: a shared host can hold hundreds, the graph shows a handful
 
 def export() -> bytes:
     base = state["base"]
@@ -698,6 +858,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(index(query))
         if path == "/graf":
             return self.send(graph(query))
+        if path == "/graf.json":
+            return self.send(json.dumps(graph_data(query), ensure_ascii=False).encode(), "application/json; charset=utf-8")
         if path == "/eksport.json":
             return self.send(export(), "application/json; charset=utf-8")
         if path.startswith("/static/") and (f := STATIC / clean(path[8:])).is_file() and f.suffix in TYPES:

@@ -18,3 +18,7 @@ document.querySelectorAll("form[data-confirm]").forEach((f) =>
   f.addEventListener("submit", (e) => { if (!confirm(f.dataset.confirm)) e.preventDefault(); }));
 document.querySelectorAll("form.add").forEach((f) =>
   f.addEventListener("submit", () => { const b = f.querySelector("button"); b.disabled = true; b.firstChild.textContent = "Wgrywam i analizuję "; }));
+document.querySelectorAll("select[form=mf]").forEach((s) => s.addEventListener("change", () => s.form.requestSubmit()));
+document.querySelectorAll("#mf").forEach((f) => f.addEventListener("submit", () =>  // a short address: empty filters stay out of it
+  document.querySelectorAll("[form=mf]").forEach((x) => { if (!x.value) x.disabled = true; })));
+addEventListener("pageshow", () => document.querySelectorAll("[form=mf]").forEach((x) => { x.disabled = false; }));  // back button
