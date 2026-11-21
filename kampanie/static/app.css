@@ -152,7 +152,7 @@ a.chip:hover { background: var(--red-ink); color: var(--on-red); }
 /* evidence: a pair, its score as a bar, its reasons */
 .pairs { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
 .pair { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 20px; padding-top: 14px; border-top: 1px solid var(--rule); }
-.pair-who { font: 700 15px/1.3 var(--num); }
+.pair-who { font: 700 15px/1.3 var(--num); overflow-wrap: anywhere; }  /* long domains broke out of the 150 px column */
 .pair-who a { text-decoration: none; }
 .pair-who a:hover { text-decoration: underline; }
 .score { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
@@ -212,7 +212,14 @@ tr.lone td.id { color: var(--ink-2); }
 .g-node.ok { fill: var(--card); stroke: var(--ink-2); }
 .g-text { font: 800 11px/1 var(--num); fill: var(--ink); pointer-events: none; }
 .g-text.hi { fill: var(--on-red); }
-.legend { list-style: none; margin: 20px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px 28px; font-size: 15px; color: var(--ink-2); }
+/* topic filter above campaigns and the graph */
+.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 24px; font-size: 15px; }
+.filters span { font-weight: 700; color: var(--ink-2); margin-right: 4px; }
+.filters a { padding: 6px 12px; text-decoration: none; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--rule); }
+.filters a:hover { box-shadow: inset 0 0 0 1.5px var(--ink); }
+.filters a[aria-current] { background: var(--red); color: var(--on-red); box-shadow: none; }
+.filters b { font-family: var(--num); }
+.legend { list-style: none; margin: 0 0 20px; padding: 0; display: flex; flex-wrap: wrap; gap: 10px 28px; font-size: 15px; color: var(--ink-2); }
 .legend li { display: flex; align-items: center; gap: 10px; }
 .legend i { width: 14px; height: 14px; border-radius: 50%; border: 3px solid var(--red); }
 .legend .hi { background: var(--red); }

@@ -318,7 +318,7 @@ def pager(query, key: str, n: int, last: int, where: str, anchor: str = "") -> s
     if last == 1:
         return ""
     def go(i):  # the other list keeps its page
-        q = {x: v[0] for x, v in (query or {}).items() if x in ("k", "s")} | {key: str(i)}
+        q = {x: v[0] for x, v in (query or {}).items() if x in ("k", "s", "t")} | {key: str(i)}
         return e(f"{where}?{urlencode(q)}{anchor}")
     prev = f'<a class="btn btn-line btn-sm" href="{go(n - 1)}" rel="prev">← Poprzednie</a>' if n > 1 else ""
     nxt = f'<a class="btn btn-line btn-sm" href="{go(n + 1)}" rel="next">Następne →</a>' if n < last else ""
@@ -342,7 +342,7 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
             f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
-<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=5">
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=6">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
 <script src="/static/app.js?v=2" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
@@ -434,6 +434,29 @@ def pair(score, who: str, ev) -> str:
             f'<i style="--s:{score:.3f}"></i></div></div>{reasons(ev)}</li>')
 
 
+def topic_of(c) -> str:
+    """A campaign's main topic: the one most of its materials have, so a mixed one still sits under one."""
+    by_id = state["base"].by_id
+    got = Counter(t for x in c["members"] if x in by_id for t in by_id[x].topics)
+    return got.most_common(1)[0][0] if got else "bez tematu"
+
+
+def by_topic(query, campaigns: list, where: str, anchor: str = "") -> tuple[list, str]:
+    """The campaigns of the topic in ?t= (all for none or junk) and the filter links with their counts."""
+    topics = [topic_of(c) for c in campaigns]
+    counts = Counter(topics)
+    t = (query or {}).get("t", [""])[0]
+    t = t if t in counts else ""
+
+    def link(name: str, label: str, n: int) -> str:
+        href = e(where + (f"?{urlencode({'t': name})}" if name else "") + anchor)
+        now = ' aria-current="true"' if name == t else ""
+        return f'<a href="{href}"{now}>{e(label)} <b>{n}</b></a>'
+    nav = (f'<nav class="filters" aria-label="Temat kampanii"><span>Temat:</span>{link("", "wszystkie", len(campaigns))}'
+           f'{"".join(link(x, x, n) for x, n in counts.most_common())}</nav>')
+    return [c for c, x in zip(campaigns, topics) if not t or x == t], nav
+
+
 def campaign_of(campaigns) -> dict:
     return {mid: c for c in campaigns for mid in c["members"]}
 
@@ -477,20 +500,21 @@ aria-label="Folder z materiałami"></label></div></div>
 def index(query=None) -> bytes:
     base, campaigns = state["base"], state["campaigns"]
     ms = base.materials
-    many = [c for c in campaigns if len(c["members"]) > 1]
+    every = [c for c in campaigns if len(c["members"]) > 1]
+    many, filters = by_topic(query, every, "/", "#kampanie")
     kn, klast = page_no(query, "k", len(many), PER_CAMPS)
     sn, slast = page_no(query, "s", len(ms), PER_ROWS)
     where = campaign_of(campaigns)
     if state.get("high", (None,))[0] is not base:  # verdicts of ~2000 took 3 s on each visit: once per base
         state["high"] = (base, sum(1 for m in ms if k.verdict(m)[1] >= 4))
     high = state["high"][1]
-    lone = len(ms) - sum(len(c["members"]) for c in many)
+    lone = len(ms) - sum(len(c["members"]) for c in every)
     error = f'<div class="notice" role="alert">{e(state["error"])}</div>' if state["error"] else ""
     hero = f"""<section class="wrap hero"><p class="eyebrow">Kolekcjoner fejków · demonstrator</p>
 <h1>Od pojedynczej reklamy <span>do kampanii.</span></h1>
 <p class="lead">Wgraj zrzut reklamy, zapisaną stronę, HAR albo cały folder incydentów. Każdy materiał od razu dostaje
 wstępny werdykt, a potem trafia do kampanii albo zostaje nowym wzorcem. Przy każdym powiązaniu widać, na jakiej podstawie.</p>
-{error}<dl class="stats"><div><dt>Materiały</dt><dd>{len(ms)}</dd></div><div><dt>Kampanie</dt><dd>{len(many)}</dd></div>
+{error}<dl class="stats"><div><dt>Materiały</dt><dd>{len(ms)}</dd></div><div><dt>Kampanie</dt><dd>{len(every)}</dd></div>
 <div class="hot"><dt>Wysokie ryzyko</dt><dd>{high}</dd></div><div><dt>Nowe wzorce</dt><dd>{lone}</dd></div></dl></section>"""
     form = REPORT.format(collector=COLLECTOR if KOLEKTOR.is_file() else "", turnstile=TURNSTILE.format(e(TURNSTILE_SITE)) if TURNSTILE_SITE else "") + FORM.format(online="Adresy stron i wiek domen (RDAP) sprawdzamy w sieci. Pliki nie opuszczają kontenera."
                        if ONLINE else "Tryb offline: nic nie opuszcza kontenera, adres strony jest tylko zapisany.")
@@ -531,7 +555,7 @@ wstępny werdykt, a potem trafia do kampanii albo zostaje nowym wzorcem. Przy ka
 <section class="sec" id="kampanie" aria-labelledby="kampanie-t"><div class="wrap"><div class="sec-head"><h2 id="kampanie-t">Kampanie</h2>
 <p>Materiał należy do kampanii, gdy ma w niej co najmniej jedno powiązanie o sile ≥ {num(k.LINK)}. Kampanie, których
 materiały są średnio podobne w stopniu ≥ {num(k.FAMILY)}, tworzą rodzinę. {many_of(lone)} bez takiego powiązania to nowe wzorce.</p></div>
-<div class="camps">{camps}</div></div></section>
+{filters}<div class="camps">{camps}</div></div></section>
 <section class="sec" id="materialy" aria-labelledby="materialy-t"><div class="wrap"><div class="sec-head"><h2 id="materialy-t">Materiały</h2>
 <p>Wstępny werdykt to suma punktów za cechy oszustwa: od 4 punktów wysokie ryzyko, od 2 podejrzane. Kliknij materiał,
 żeby zobaczyć powody, braki danych i podobne materiały.</p></div>{table}{clear}</div></section>""", "k", refresh=True)
@@ -590,8 +614,9 @@ strony i tekstu. Z tych cech biorą się przesłanki.</p></div>{features(m)}{rem
 
 def graph(query=None) -> bytes:
     base = state["base"]
-    gn, glast = page_no(query, "g", len(state["campaigns"]), PER_GRAPH)
-    campaigns = state["campaigns"][(gn - 1) * PER_GRAPH:gn * PER_GRAPH]  # biggest first
+    chosen, filters = by_topic(query, state["campaigns"], "/graf")
+    gn, glast = page_no(query, "g", len(chosen), PER_GRAPH)
+    campaigns = chosen[(gn - 1) * PER_GRAPH:gn * PER_GRAPH]  # biggest first
     cols = max(1, math.ceil(math.sqrt(len(campaigns))))
     cell, pos, parts = 280, {}, []
     for i, c in enumerate(campaigns):
@@ -628,8 +653,9 @@ def graph(query=None) -> bytes:
     return page("Graf powiązań", f"""<section class="wrap hero"><p class="eyebrow">Graf powiązań</p>
 <h1>Kto z kim <span>i dlaczego.</span></h1><p class="lead">Okrąg to kampania, od największych. Linia łączy
 parę z jednej kampanii o podobieństwie ≥ {num(k.FAMILY)} (w dużych kampaniach tylko najsilniejsze): im grubsza, tym silniejsza. Najedź na linię, żeby zobaczyć przesłanki, kliknij materiał, żeby go otworzyć.</p></section>
-<section class="wrap"><div class="graph">{svg}</div><ul class="legend"><li><i class="hi"></i>wysokie ryzyko</li>
-<li><i></i>podejrzane</li><li><i class="ok"></i>brak sygnałów</li><li><i class="ln"></i>powiązanie</li></ul></section>""", "g")
+<section class="wrap">{filters}<ul class="legend"><li><i class="hi"></i>wysokie ryzyko</li>
+<li><i></i>podejrzane</li><li><i class="ok"></i>brak sygnałów</li><li><i class="ln"></i>powiązanie</li></ul>
+<div class="graph">{svg}</div></section>""", "g")
 
 
 def export() -> bytes:

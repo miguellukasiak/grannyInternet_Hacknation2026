@@ -218,6 +218,21 @@ class Paging(unittest.TestCase):
         self.assertEqual(many.split("<details")[0].count("chip"), 6)  # the list's own class and the first five
         self.assertNotIn("<details", app.chips(["a.pl", "b.pl"]))
 
+    def test_topic_filter(self):
+        import app
+        ms = [k.Material(id=f"m{i}", name=f"m{i}", topics=t) for i, t in
+              enumerate((["hazard"], ["hazard", "zdrowie / suplement"], ["zdrowie / suplement"], [], []))]
+        camps = [{"members": ["m0", "m1", "m2"]}, {"members": ["m3", "m4"]}]
+        saved, app.state["base"] = app.state["base"], k.Base(ms)
+        try:  # the mixed one sits under the topic most of its materials have
+            got, nav = app.by_topic({"t": ["hazard"]}, camps, "/", "#kampanie")
+            self.assertEqual(got, camps[:1])
+            self.assertIn('href="/?t=hazard#kampanie" aria-current="true"', nav)
+            self.assertIn("bez tematu <b>1</b>", nav)
+            self.assertEqual(app.by_topic({"t": ["<x>"]}, camps, "/")[0], camps)  # junk: all of them
+        finally:
+            app.state["base"] = saved
+
     def test_hosting_firms_of_a_campaign(self):
         import app
         book = {"192.0.2.4": ({"country": {"iso_code": "SG"}}, {"autonomous_system_organization": "Tani Hosting"}),
