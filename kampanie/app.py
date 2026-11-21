@@ -354,13 +354,13 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
             f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
-<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=9">
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=10">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
 <script src="/static/app.js?v=4" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
 <header class="wrap top"><a class="mark" href="/"><i></i>grannyInternet <span>/ kampanie</span></a>
 <nav aria-label="Główna">{nav("/#kampanie", "Kampanie", "k")}{nav("/#materialy", "Materiały", "m")}{nav("/graf", "Graf powiązań", "g")}
-{nav("/eksport.json", "Eksport JSON", "x")}<a class="nav-cta" href="/#zglos">Zgłoś domenę</a></nav></header>
+{nav("/eksport.json", "Eksport JSON", "x")}<a href="https://grannyinternet.me/audytorzy/">Strona dla audytorów</a><a class="nav-cta" href="/#zglos">Zgłoś domenę</a></nav></header>
 <main id="tresc">{body}</main>
 <footer class="foot"><div class="wrap"><div class="foot-row"><a class="mark" href="/"><i></i>grannyInternet</a>
 <span>Wynik to wstępna ocena z przesłankami, nie wyrok. Decyzję podejmuje człowiek.</span></div>
