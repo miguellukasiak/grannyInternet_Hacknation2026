@@ -1,3 +1,4 @@
 pillow==12.0.0
 scikit-learn==1.7.2
 tldextract==5.4.0
+maxminddb==3.3.0

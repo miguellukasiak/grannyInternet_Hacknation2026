@@ -15,11 +15,13 @@ import threading
 import urllib.error
 import urllib.request
 import zipfile
-from collections import deque
+from collections import Counter, deque
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
+
+import maxminddb
 
 import baza
 import kampanie as k
@@ -376,6 +378,44 @@ def chips(items, cls="chip") -> str:
     return fold([f'<span class="{cls}">{e(str(x))}</span>' for x in items]) if items else '<span class="none">brak</span>'
 
 
+# DB-IP Lite (CC BY 4.0), downloaded into the image by the Dockerfile: looked up here, addresses never leave the container
+GEO = [Path(__file__).with_name(f"dbip-{kind}-lite.mmdb") for kind in ("country", "asn")]
+_geo = None
+
+
+def geo() -> list:
+    """The two readers, opened once; [] without the files (the card leaves the row out)."""
+    global _geo
+    if _geo is None:
+        try:
+            _geo = [maxminddb.open_database(str(p)) for p in GEO]
+        except (OSError, ValueError) as err:
+            print("geo:", err)
+            _geo = []
+    return _geo
+
+
+def hosting(ms) -> list[str]:
+    """Who hosts a campaign's sites: each member once per hosting firm and country, then those only behind a CDN.
+    Shown, never evidence: one firm hosts hundreds of unrelated scams, linking by it would merge campaigns."""
+    if not geo():
+        return []
+    firms, cdn, bare = Counter(), 0, 0
+    for m in ms:
+        own = [ip for ip in m.ips if not k.on_cdn(ip)]
+        cdn += bool(m.ips) and not own
+        bare += not m.ips
+        found = set()
+        for ip in own:
+            try:
+                country, asn = ((r.get(ip) or {}) for r in _geo)
+            except ValueError:  # an address from a HAR that is not one
+                continue
+            found.add((asn.get("autonomous_system_organization") or "nieznany dostawca",
+                       (country.get("country") or {}).get("iso_code") or "?"))
+        firms.update(found)
+    return ([f"{firm} · {cc} · {n}" for (firm, cc), n in firms.most_common()]
+            + ([f"za CDN {cdn}"] if cdn else []) + ([f"bez adresu {bare}"] if bare else []))
 
 
 def stamp(m, big=False) -> str:
@@ -458,11 +498,14 @@ wstępny werdykt, a potem trafia do kampanii albo zostaje nowym wzorcem. Przy ka
     for c in many[(kn - 1) * PER_CAMPS:kn * PER_CAMPS]:
         dups = ", ".join(f"{a} = {b}" for a, b in c["duplicates"])
         pairs = "".join(pair(s, f"{mlink(a, '')} ~ {mlink(b, '')}", ev[:3]) for s, a, b, ev in c["pairs"][:4])
+        hosts = hosting([base.by_id[x] for x in c["members"] if x in base.by_id])
+        hosts = (f'<div class="wide"><dt>Serwery stron</dt><dd>{chips(hosts)}<p class="none">Firma hostingowa · kraj serwera · '
+                 f'liczba stron. Tylko informacja, nie dowód powiązania. <a href="https://db-ip.com">IP Geolocation by DB-IP</a></p></dd></div>') if hosts else ""
         cards.append(f"""<article class="camp" id="{e(c['id'])}"><div class="camp-side"><span class="camp-id">{e(c['id'])}</span>
 <h3>{e(c['label'])}</h3><p>{many_of(len(c['members']))} · rodzina {e(c['family'])}</p></div>
 <div class="camp-main"><dl class="facts"><div><dt>Materiały</dt><dd>{fold([mlink(x) for x in c['members']])}</dd></div>
 <div><dt>Łączy je</dt><dd>{chips(c['linked_by'], 'chip sig')}</dd></div>
-<div class="wide"><dt>Domeny stron</dt><dd>{chips(c['domains'])}</dd></div>
+<div class="wide"><dt>Domeny stron</dt><dd>{chips(c['domains'])}</dd></div>{hosts}
 {f'<div class="wide"><dt>Duplikaty</dt><dd>{chips(dups.split(", "))}</dd></div>' if dups else ''}</dl>
 <ol class="pairs" aria-label="Najsilniejsze powiązania">{pairs}</ol></div></article>""")
     if not ms:

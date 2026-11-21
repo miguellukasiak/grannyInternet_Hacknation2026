@@ -218,6 +218,20 @@ class Paging(unittest.TestCase):
         self.assertEqual(many.split("<details")[0].count("chip"), 6)  # the list's own class and the first five
         self.assertNotIn("<details", app.chips(["a.pl", "b.pl"]))
 
+    def test_hosting_firms_of_a_campaign(self):
+        import app
+        book = {"192.0.2.4": ({"country": {"iso_code": "SG"}}, {"autonomous_system_organization": "Tani Hosting"}),
+                "192.0.2.5": ({"country": {"iso_code": "SG"}}, {"autonomous_system_organization": "Tani Hosting"})}
+        fake = [type("R", (), {"get": staticmethod(lambda ip, i=i: book.get(ip, ({}, {}))[i])})() for i in (0, 1)]
+        ms = [k.Material(id=f"m{i}", name=f"m{i}", ips=ips) for i, ips in
+              enumerate((["192.0.2.4", "192.0.2.5"], ["192.0.2.4"], ["104.16.0.1"], [], ["198.51.100.9"]))]
+        saved, app._geo = app._geo, fake
+        try:  # two addresses of one site count once; Cloudflare's is a CDN; an unknown one still has a row
+            self.assertEqual(app.hosting(ms), ["Tani Hosting · SG · 2", "nieznany dostawca · ? · 1", "za CDN 1", "bez adresu 1"])
+            app._geo = []
+            self.assertEqual(app.hosting(ms), [])  # no files in the image: no row
+        finally:
+            app._geo = saved
 
 
 if __name__ == "__main__":
