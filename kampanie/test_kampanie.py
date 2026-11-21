@@ -337,6 +337,20 @@ class Paging(unittest.TestCase):
         finally:
             app._geo = saved
 
+    def test_failed_regroup_clears_busy_bar(self):
+        import app
+        saved = app.commit
+        app.commit = lambda ms: 1 / 0
+        app.pending.append(k.Material("zly", "zly"))
+        app.state["status"] = "Przeliczam kampanie z nowymi materiałami"
+        try:  # otherwise the page refreshes every 3 s for ever
+            app.regroup()
+            self.assertEqual(app.state["status"], "")
+            self.assertFalse(app.work.locked())
+        finally:
+            app.commit = saved
+            app.pending.clear()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,6 @@
 """GUI of kampanie: http://127.0.0.1:8501. The user uploads materials in the browser (files, a folder, a ZIP, a URL or
 an ad text); their features are kept in /data/baza.json and every new one is compared with all the others."""
+import contextlib
 import email.parser
 import email.policy
 import html
@@ -12,6 +13,7 @@ import shutil
 import tempfile
 import textwrap
 import threading
+import traceback
 import urllib.error
 import urllib.request
 import zipfile
@@ -64,7 +66,7 @@ def commit(materials):
 
 def regroup():
     """Adds the waiting materials and groups once for all of them, outside any request: Cloudflare gives up at 100 s."""
-    with work:
+    with work, idle():
         while pending:
             new, ids = [], set(state["base"].by_id)
             while pending:
@@ -74,6 +76,16 @@ def regroup():
                     ids.add(m.id)
             if new:
                 commit(state["base"].materials + new)
+
+
+@contextlib.contextmanager
+def idle():
+    """Clears the busy bar however the work ends: a failed regroup must not refresh the page every 3 s for ever."""
+    try:
+        yield
+    except Exception:
+        traceback.print_exc()  # the old base stays; the materials of this round are not added
+    finally:
         state["status"] = ""
 
 
@@ -85,9 +97,8 @@ def add_later(m):
 
 def drop_later(mid):
     def run():
-        with work:
+        with work, idle():
             commit([m for m in state["base"].materials if m.id != mid])
-            state["status"] = ""
     state["status"] = "Usuwam materiał i przeliczam kampanie"
     threading.Thread(target=run, daemon=True).start()
 
