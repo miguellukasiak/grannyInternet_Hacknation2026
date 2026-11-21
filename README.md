@@ -70,7 +70,7 @@ Dwa materiały są porównywane sygnał po sygnale. Każdy pasujący sygnał to 
 | ten sam identyfikator reklam/analityki | 0,95 |
 | ta sama domena strony docelowej | 0,90 |
 | wspólne 5-wyrazowe fragmenty tekstu (Jaccard ≥ 15%) | 0,3 + udział, do 0,95 |
-| te same obrazy (dHash, różnica ≤ 5 z 64 bitów) | 0,6 + 0,1 za każdy kolejny, do 0,9 |
+| te same obrazy (dHash całości i środka po obcięciu 5% i 10% brzegów, różnica ≤ 4 z 64 bitów) | 0,6 + 0,1 za każdy kolejny, do 0,9 |
 | podobna narracja (kosinus TF-IDF ≥ 0,25) | 0,8 × kosinus, do 0,7 |
 | ten sam schemat parametrów linku | 0,6 |
 | wspólne domeny w linkach i zasobach | 0,3 za domenę, do 0,6 |
@@ -130,7 +130,7 @@ Wynik: ≥ 4 punkty to **wysokie ryzyko**, ≥ 2 to **podejrzane**, a mniej to b
 ### 5. Weryfikacja zrzutu strony
 
 Zrzut ekranu jest pełnoprawnym materiałem. OCR odczytuje podpis reklamy i adres z paska przeglądarki, który
-trafia do domen jak link. dHash łączy ten sam obraz po przeskalowaniu lub ponownej kompresji. Zrzut strony,
+trafia do domen jak link. dHash łączy ten sam obraz po przeskalowaniu, ponownej kompresji, zmianie jasności i obcięciu brzegów. Na 147 obrazach zestawu organizatora daje 20 par, wszystkie trafne; przy progu 5 łączył też dwie pary różnych twarzy w jednakowej okrągłej ramce. Nie łączy obrazu przyciętego z jednej strony ani przerobionego (inne imię na tym samym fałszywym panelu banku). Zrzut strony,
 która zniknęła, nadal łączy się z kampanią przez tekst, adres i obraz.
 
 ### 6. Interfejs

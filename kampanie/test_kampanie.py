@@ -62,7 +62,7 @@ class Campaigns(unittest.TestCase):
         self.assertIn("Rafał Brzoska", a.persons)
         self.assertIn("Gazeta.pl", a.claimed)
         self.assertIn("utm_campaign,utm_id,utm_medium", a.params)
-        self.assertEqual(len(a.images), 1)
+        self.assertEqual({n for _, n in a.images}, {"hero.png"})
 
     def test_verdict(self):
         self.assertEqual(k.verdict(self.by["a"])[0], "wysokie ryzyko: wygląda na oszustwo")
@@ -92,6 +92,20 @@ class Campaigns(unittest.TestCase):
         self.assertEqual(base.link(x, y), 0.0)
         base._pairs[("x", "y")] = (0.97, [(0.95, "identyfikator", ""), (0.35, "osoba", "")])
         self.assertEqual(base.link(x, y), 0.97)
+
+    def test_cropped_picture_is_one_picture(self):
+        with tempfile.TemporaryDirectory() as t:
+            picture(full := Path(t) / "a.png", 3)
+            with Image.open(full) as im:
+                w, h = im.size
+                im.crop((w // 10, h // 10, w - w // 10, h - h // 10)).save(cut := Path(t) / "b.png")
+            picture(other := Path(t) / "c.png", 9)
+            x, y, z = (k.Material(id=i, name=i) for i in "xyz")
+            for m, p in ((x, full), (y, cut), (z, other)):
+                k.add_image(m, p, screenshot=False)
+        base = k.Base([k.finish(m) for m in (x, y, z)])
+        self.assertIn("obraz", [kind for _, kind, _ in base.compare(x, y)[1]])
+        self.assertNotIn("obraz", [kind for _, kind, _ in base.compare(x, z)[1]])
 
     def test_missing_data_is_no_counter_evidence(self):
         empty = k.finish(k.Material(id="x", name="x"))

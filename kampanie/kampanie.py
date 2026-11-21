@@ -43,7 +43,9 @@ SOFT = {"narracja", "temat", "osoba", "marka", "serwer", "parametry"}  # one sto
 STRONG_TEXT = 0.4  # share of 5-word runs that is a copied text; a shop platform's checkout footer alone gives 15–20%
 FAMILY = 0.2  # score of a family of campaigns: average linkage, so weak clues (a topic, a person) do not chain everything
 DUPLICATE = 0.9  # share of 5-word runs: the same text, a copy of one page
-IMAGE_DIST = 5  # bits of 64 in which two dHashes may differ and still be one picture (recompressed, resized)
+IMAGE_DIST = 4  # bits of 64 in which two dHashes may differ and still be one picture (recompressed, resized);
+# at 5 two different faces in one round testimonial frame matched (organiser's set, 21.11)
+CROPS = (0, 0.05, 0.1)  # a re-upload is often trimmed at the edges: the centre gets hashes of its own
 # the bundled suffix list (no download at start) with its private part: x.netlify.app, y.myshopify.com, z.lovable.app
 # are separate sites of separate owners, not one domain
 _ext = tldextract.TLDExtract(suffix_list_urls=(), include_psl_private_domains=True)
@@ -346,8 +348,10 @@ def add_image(m: Material, path: Path, screenshot: bool):
     with Image.open(path) as img:
         if min(img.size) < 48:  # icons and spacers
             return
-        if (h := dhash(img)) is not None:
-            m.images.append([h, path.name])
+        w, h = img.size
+        for f in CROPS:  # one entry per crop, all under one name: a saved base keeps its [hash, name] rows
+            if (dh := dhash(img.crop((int(w * f), int(h * f), int(w * (1 - f)), int(h * (1 - f)))))) is not None:
+                m.images.append([dh, path.name])
     if screenshot:
         try:
             text = ocr(path)

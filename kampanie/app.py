@@ -393,7 +393,7 @@ def features(m) -> str:
             ("Przekierowania", chips(" → ".join(c) for c in m.redirects)), ("Identyfikatory", chips(m.trackers)),
             ("Schemat parametrów linku", chips(m.params)), ("IP serwera", chips(m.ips)),
             ("Osoby", chips(m.persons)), ("Udawane marki", chips(m.claimed)), ("Temat", chips(m.topics)),
-            ("Pola formularzy", chips(m.forms)), ("Obrazy (dHash)", f'<span class="num">{len(m.images)}</span>'),
+            ("Pola formularzy", chips(m.forms)), ("Obrazy (dHash)", f'<span class="num">{len({n for _, n in m.images})}</span>'),
             ("Inne domeny", chips(m.domains[:25])), ("Pliki strony", chips(m.assets[:20])), ("Przeczytane", chips(m.sources))]
     dl = "".join(f"<div><dt>{a}</dt><dd>{b}</dd></div>" for a, b in rows)
     text = f'<div class="text">{e(m.text[:3000])}</div>' if m.text else ""
