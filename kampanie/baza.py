@@ -1,6 +1,6 @@
 """Our collector's verdicts as campaign materials: each judged domain with its ad, page text, links, servers and IDs.
 
-python baza.py /db/verdicts.db [--limit N]   (read from a copy: the collector's database is never written)
+python baza.py /db/verdicts.db [--limit N] [--tabela kampanie.json]   (read from a copy: the collector's database is never written)
 """
 import json
 import re
@@ -72,8 +72,19 @@ def read(path: str, verdicts=("block",), limit: int | None = None) -> list[tuple
     return [(source(r[3], r[2]), material(*r)) for r in rows]
 
 
+def table(campaigns: list[dict]) -> dict:
+    """{blocked domain: its campaign} for the panel's report form: domains, motif and evidence kinds, no evidence text."""
+    return {d: {"size": len(c["members"]), "label": c["label"], "linked_by": c["linked_by"],
+                "others": [x for x in c["members"] if x != d][:5]}
+            for c in campaigns if len(c["members"]) > 1 for d in c["members"]}
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     limit = int(args[args.index("--limit") + 1]) if "--limit" in args else None
     found = read(args[0], limit=limit)
     print(f"{len(found)} zablokowanych domen z bazy")
+    if "--tabela" in args:  # computed away from the server: the full base takes 3 GB and 8 minutes
+        rows = table(k.Base([m for _, m in found]).campaigns())
+        Path(args[args.index("--tabela") + 1]).write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+        print(f"{len(rows)} domen w kampaniach")
