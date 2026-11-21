@@ -98,17 +98,17 @@ if (box) {
   function show(n) {
     const d = n.data, out = [];
     const p = (text, tag = "p") => { const x = document.createElement(tag); x.textContent = text; out.push(x); return x; };
-    const a = (text, href) => { const x = document.createElement("a"); x.textContent = text; x.href = href; out.push(x); };
+    const a = (text, href) => { const x = document.createElement("a"); x.className = "g-go"; x.textContent = text; x.href = href; out.push(x); };
     if (n.kind === "hub") {
       p(`${d.id} · ${d.label}`, "h3");
+      a("Otwórz kartę kampanii →", d.href);  // first, so it is in sight without scrolling
       p(`${d.n} materiałów · temat: ${d.topic} · rodzina ${d.family}`);
-      a("Otwórz kartę kampanii →", d.href);
     } else if (n.kind === "mat") {
       p(d.label, "h3");
+      a("Otwórz kartę materiału →", "/m/" + encodeURIComponent(d.id));
       p(`Kampania ${d.campaign || "—"}`);
       for (const t of d.traits || []) p(`${t.kind}: ${t.name} · także w ${t.others.length + t.more} innych`);
       if (d.traits && !d.traits.length) p("Nie dzieli z innymi żadnego identyfikatora, osoby, marki, domeny ani serwera.");
-      a("Otwórz kartę materiału →", "/m/" + encodeURIComponent(d.id));
     } else {
       p(`${d.kind}: ${d.name}`, "h3");
       p(`Wspólne dla ${d.others.length + d.more + 1} materiałów${d.more ? `, pokazujemy ${d.others.length + 1}` : ""}.`
@@ -123,8 +123,8 @@ if (box) {
       const a = list[i];
       for (let j = i + 1; j < list.length; j++) {
         const b = list[j];
-        let dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy || 1;
-        const d = Math.sqrt(d2);
+        let dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.hypot(dx, dy) || 1, d2 = Math.max(d * d, (a.r + b.r) ** 2);  // two nodes born on top of each other flung one far away
         let f = (1800 * alpha * (a.r + b.r)) / 18 / d2;
         dx /= d; dy /= d;
         a.vx -= dx * f; a.vy -= dy * f; b.vx += dx * f; b.vy += dy * f;
@@ -132,12 +132,12 @@ if (box) {
     }
     apart(list);
     for (const { a, b, kind } of edges.values()) {  // springs
-      const want = (kind === "soft" ? 260 : kind === "trait" ? 70 : 90) + a.r + b.r;
+      const want = (kind === "soft" ? 160 : kind === "trait" ? 70 : 90) + a.r + b.r;
       const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, f = ((d - want) / d) * 0.06 * alpha;
       a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
     }
     for (const n of list) {
-      n.vx -= n.x * 0.004 * alpha; n.vy -= n.y * 0.004 * alpha;
+      n.vx -= n.x * 0.02 * alpha; n.vy -= n.y * 0.02 * alpha;
       n.x += n.vx; n.y += n.vy; n.vx *= 0.55; n.vy *= 0.55;
     }
   }

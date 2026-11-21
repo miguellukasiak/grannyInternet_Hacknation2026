@@ -343,7 +343,7 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
             f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
-<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=8">
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=9">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
 <script src="/static/app.js?v=4" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
@@ -725,7 +725,7 @@ Przerywana linia między kampaniami to słabe podobieństwo (≥ {num(k.FAMILY)}
 <section class="wrap">{filters}<ul class="legend"><li><i class="camp"></i>kampania</li><li><i class="hi"></i>wysokie ryzyko</li>
 <li><i></i>podejrzane</li><li><i class="ok"></i>brak sygnałów</li><li><i class="trait"></i>wspólna cecha</li>
 <li><i class="ln"></i>powiązanie</li></ul>{live}<noscript><div class="graph">{svg}</div></noscript>
-<script src="/static/graf.js?v=3" defer></script></section>""", "g")
+<script src="/static/graf.js?v=4" defer></script></section>""", "g")
 
 
 TRAIT_KINDS = ("identyfikator", "osoba", "marka", "domena", "serwer", "hosting")
