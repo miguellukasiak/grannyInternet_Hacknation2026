@@ -11,6 +11,7 @@ link of at least LINK), families of campaigns average-linkage clusters at a lowe
 import base64
 import email
 import email.policy
+import hashlib
 import html
 import itertools
 import ipaddress
@@ -54,6 +55,7 @@ VIDEOS = {".mp4", ".mov", ".webm", ".m3u8", ".ts", ".avi", ".mkv"}
 # anycast addresses of a CDN or a shop platform: thousands of unrelated sites answer from one IP (Cloudflare's published
 # ranges, Shopify's storefronts). shortcut: the two biggest in our data; add a range when it chains a campaign
 SHARED_IP = 20  # domains on one IP: from here on a hosting platform, not one owner
+SHARED_CODE = 10  # materials with one own API or CSS/JS file: below it never taken for a platform
 
 CDN = [ipaddress.ip_network(n) for n in (
     "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
@@ -85,7 +87,27 @@ TRACKERS = [  # (name, regex): an account ID of an ad or analytics service, the 
     ("Google Analytics", r"\b(UA-\d{4,10}-\d{1,3})\b"),
     ("piksel TikTok", r"ttq\.load\(\s*['\"]([A-Z0-9]{12,25})"),
     ("Yandex Metrica", r"mc\.yandex\.ru/watch/(\d{5,12})"),
+    ("reklama Meta", r"[?&]ad_id=(\d{12,20})\b"),  # one ad: the link it sent people with
+    ("kampania Meta", r"[?&](?:fb_)?campaign_id=(\d{12,20})\b"),
+    ("Google Ads", r"\bAW-(\d{9,11})\b"),
+    ("Google Ads", r"/(?:1p-conversion|viewthroughconversion)/(\d{9,11})/"),
 ]
+# hosting whose every subdomain is one customer's account, but missing from the Public Suffix List
+ACCOUNT_HOSTS = {"b-cdn.net", "surge.sh", "weebly.com", "tilda.ws", "godaddysites.com", "wordpress.com",
+                 "000webhostapp.com", "mystrikingly.com", "site123.me", "jimdosite.com", "webnode.page", "ucoz.net"}
+# self-hosted copies of public libraries: the same bytes on unrelated sites
+# shortcut: names only (a saved page's _files keep no origin); Base.common drops the rest once the base is large
+LIBRARY = re.compile(r"jquery|bootstrap|fbevents|gtag|gtm|analytics|swiper|slick|owl\.carousel|lazysizes|sweetalert|"
+                     r"intl-?tel|inputmask|imask|polyfill|recaptcha|font-?awesome|animate|aos\b|wow\b|lottie|embla|"
+                     r"vue|react|axios|lodash|moment|popper|fancybox|lightbox|select2|toastr|normalize|reset|"
+                     r"framework|webpack|runtime|vendor|sdk|shaka|email-decode|^all\.min\.css$|"
+                     # Google Maps and Translate scripts a saved page keeps next to its own
+                     r"^(?:common|util|controls|geometry|log|init_embed|onion|map|marker|stats|element|api|embed|"
+                     r"places|places_impl)\.js$",
+                     re.I)
+THEMES = re.compile(r"/wp-(?:content|includes)/|/cdn/shop/")  # one WordPress or Shopify theme serves thousands of shops
+OWN_CODE = re.compile(r"\.(css|js)$")
+KIT_ID = re.compile(r"^(?:[0-9a-f-]{8,}|\d+)$", re.I)  # per-page part of an API path (UUID, hash, number)
 # people whose faces and names scams borrow most often; a stem catches Polish inflection (Brzoska, Brzoskę)
 PERSONS = {
     "Rafał Brzoska": r"brzosk", "Monika Olejnik": r"olejnik", "Mateusz Morawiecki": r"morawieck",
@@ -155,6 +177,8 @@ class Material:
     template: list = field(default_factory=list)  # crc32 of 6-tag runs of the page structure
     shingles: list = field(default_factory=list)  # crc32 of 5-word runs of the text
     forms: list = field(default_factory=list)  # input fields
+    kit: list = field(default_factory=list)  # "POST /api/v1/trigger/field/*/": the page's own API, the backend kit
+    files: list = field(default_factory=list)  # "sha1 name" of the page's own CSS/JS: the same file, the same author
     ages: dict = field(default_factory=dict)  # domain -> days since registration (RDAP)
     sources: list = field(default_factory=list)  # what was read
     missing: list = field(default_factory=list)  # what could not be read: no evidence, not counter-evidence
@@ -168,7 +192,10 @@ def domain_of(host: str | None) -> str | None:
         ipaddress.ip_address(host)
         return None
     except ValueError:
-        return _ext(host).top_domain_under_public_suffix or None
+        dom = _ext(host).top_domain_under_public_suffix or None
+    if dom in ACCOUNT_HOSTS and host.removeprefix("www.") != dom:
+        return ".".join(host.split(".")[-(dom.count(".") + 2):])  # vz-6110f311-389.b-cdn.net, not b-cdn.net
+    return dom
 
 
 def on_cdn(ip: str) -> bool:
@@ -232,7 +259,7 @@ class Page(HTMLParser):
 
 def asset_name(url: str) -> str:
     name = urlsplit(url).path.rsplit("/", 1)[-1].lower()
-    return re.sub(r"\.(pobrane|download)$", "", name)
+    return re.sub(r"\(\d+\)(?=\.\w+$)", "", re.sub(r"\.(pobrane|download)$", "", name))  # main(1).js: a second copy
 
 
 def add_text(m: Material, text: str):
@@ -244,6 +271,24 @@ def add_trackers(m: Material, raw: str):
         for found in re.findall(pattern, raw):
             if f"{name} {found}" not in m.trackers:
                 m.trackers.append(f"{name} {found}")
+
+
+def add_file(m: Material, name: str, data: bytes):
+    """The page's own stylesheet or script, by content: a renamed copy is still the same file."""
+    if THEMES.search(name):
+        return
+    name = asset_name(name)
+    if len(data) > 500 and OWN_CODE.search(name) and not LIBRARY.search(name):
+        if (item := f"{hashlib.sha1(data).hexdigest()[:12]} {name}") not in m.files:
+            m.files.append(item)
+
+
+def add_kit(m: Material, method: str, url: str):
+    """A request the page sends to its own server: the path of the kit's API, page IDs blanked out."""
+    path = "/".join("*" if KIT_ID.match(s) else s for s in urlsplit(url).path.split("/"))
+    if method != "GET" and path.count("/") >= 3 and not re.match(r"/(cdn-cgi|wp-)", path):
+        if (item := f"{method} {path}") not in m.kit:
+            m.kit.append(item)
 
 
 def add_url(m: Material, url: str, landing: bool = False):
@@ -311,10 +356,13 @@ def add_har(m: Material, path: Path):
         add_url(m, req["url"])
         if (ip := e.get("serverIPAddress", "").strip("[]")) and host_of(req["url"]) in chain and ip not in m.ips:
             m.ips.append(ip)
+        raw = res.get("content", {}).get("text") or ""
+        data = base64.b64decode(raw) if res.get("content", {}).get("encoding") == "base64" else raw.encode()
+        if domain_of(host_of(req["url"])) in m.landing:  # the page's own server, not an ad network or a CDN library
+            add_kit(m, req["method"].upper(), req["url"])
+            add_file(m, req["url"], data)
         if e is main or (main is None and "html" in res.get("content", {}).get("mimeType", "")):
-            body = res.get("content", {}).get("text") or ""
-            if res.get("content", {}).get("encoding") == "base64":
-                body = base64.b64decode(body).decode("utf-8", "replace")
+            body = data.decode("utf-8", "replace")
             if body:
                 add_html(m, body, url=req["url"], source=f"{path.name} (strona z HAR)")
                 main = e
@@ -373,6 +421,9 @@ def add_info(m: Material, path: Path):
     for key in ("webpage_url", "original_url"):
         if str(info.get(key, "")).startswith("http"):
             add_url(m, info[key])
+    for key in ("playlist_uploader_id", "uploader_id", "channel_id"):  # the advertiser's page, as baza.py names it
+        if re.fullmatch(r"\d{6,20}", str(info.get(key) or "")) and (t := f"strona FB {info[key]}") not in m.trackers:
+            m.trackers.append(t)
     m.sources.append(path.name)
 
 
@@ -396,6 +447,8 @@ def from_files(m: Material, files: list[Path], root: Path) -> Material:
                 add_mhtml(m, f)
             elif ext == ".har":
                 add_har(m, f)
+            elif in_assets and OWN_CODE.search(asset_name(f.name)):  # main.css.pobrane: a saved page's own file
+                add_file(m, f.name, f.read_bytes())
             elif f.name.endswith(".info.json"):
                 add_info(m, f)
             elif ext in IMAGES:
@@ -558,9 +611,11 @@ class Base:
         freq = Counter()
         for m in materials:
             freq.update({("d", d) for d in m.landing + m.domains} | {("a", a) for a in m.assets} |
-                        {("i", i) for i in m.ips})
+                        {("i", i) for i in m.ips} | {("k", x) for x in m.kit} | {("f", x) for x in m.files})
         many = max(3, math.ceil(0.4 * n))  # in 40% of all materials: a platform, not a campaign
-        self.common = {k for k, c in freq.items() if c >= many} | {("d", d) for d in COMMON}
+        # the same API or file of a page's own is a platform only on many pages: in a small set it is the campaign itself
+        self.common = ({k for k, c in freq.items() if c >= (max(SHARED_CODE, many) if k[0] in "kf" else many)}
+                       | {("d", d) for d in COMMON})
         # an IP that serves many of our domains is shared hosting (Lovable, Netlify, Vercel…), learned from the data itself
         self.common |= {k for k, c in freq.items() if k[0] == "i" and (c >= SHARED_IP or on_cdn(k[1]))}
         texts = [m.text or "" for m in materials]
@@ -612,7 +667,7 @@ class Base:
         pairs, index = set(self._cos), {}
         for i, m in enumerate(self.materials):
             keys = ({("d", x) for x in m.landing + m.domains} | {("a", x) for x in m.assets} |
-                    {("i", x) for x in m.ips}) - self.common
+                    {("i", x) for x in m.ips} | {("k", x) for x in m.kit} | {("f", x) for x in m.files}) - self.common
             keys |= ({("t", x) for x in m.trackers} | {("p", x) for x in m.params} |
                      {("o", x) for x in m.persons + m.claimed + m.topics})
             for key in keys:
@@ -652,6 +707,12 @@ class Base:
             ev.append((0.95, "identyfikator", "ten sam identyfikator reklam/analityki: " + ", ".join(tr)))
         if land := rare("d", set(a.landing) & set(b.landing)):
             ev.append((0.9, "domena", "ta sama domena strony: " + ", ".join(land)))
+        if same_files := rare("f", set(a.files) & set(b.files)):
+            ev.append((min(0.9, 0.7 + 0.1 * len(same_files)), "pliki",
+                       "identyczne własne pliki CSS/JS (sha1): " + ", ".join(same_files[:4])))
+        # one path may be a common shop plugin, two of one API are the same backend
+        if kit := rare("k", set(a.kit) & set(b.kit)):
+            ev.append((min(0.8, 0.4 * len(kit)), "zestaw", "to samo API strony (zestaw): " + "; ".join(kit[:4])))
         if len(a.shingles) >= 20 and len(b.shingles) >= 20 and (cp := self._jaccard("shingles", a, b)) >= 0.15:
             ev.append((min(0.95, 0.3 + cp), "tekst", f"{cp:.0%} wspólnych 5-wyrazowych fragmentów tekstu"))
         cos, words = self.narration(a, b)

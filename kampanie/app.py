@@ -353,7 +353,8 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
 <main id="tresc">{body}</main>
 <footer class="foot"><div class="wrap"><div class="foot-row"><a class="mark" href="/"><i></i>grannyInternet</a>
 <span>Wynik to wstępna ocena z przesłankami, nie wyrok. Decyzję podejmuje człowiek.</span></div>
-<p>Przesłanki: identyfikatory reklamowe, domeny i przekierowania, schemat parametrów linku, adres IP, obrazy (dHash),
+<p>Przesłanki: identyfikatory reklamowe (piksel, reklama, konto Google Ads, strona reklamodawcy), API zestawu strony,
+identyczne pliki CSS/JS, domeny i przekierowania, schemat parametrów linku, adres IP, obrazy (dHash),
 tekst i narracja, szablon HTML, osoby, marki, temat. Składają się jak niezależne poszlaki. Brak danych nie jest przesłanką
 przeciw. Metodyka: README repozytorium.</p></div></footer></body></html>""".encode()
 
@@ -625,7 +626,8 @@ def features(m) -> str:
             ("Przekierowania", chips(" → ".join(c) for c in m.redirects)), ("Identyfikatory", chips(m.trackers)),
             ("Schemat parametrów linku", chips(m.params)), ("IP serwera", chips(m.ips)),
             ("Osoby", chips(m.persons)), ("Udawane marki", chips(m.claimed)), ("Temat", chips(m.topics)),
-            ("Pola formularzy", chips(m.forms)), ("Obrazy (dHash)", f'<span class="num">{len({n for _, n in m.images})}</span>'),
+            ("Pola formularzy", chips(m.forms)), ("API strony (zestaw)", chips(m.kit)), ("Własne pliki CSS/JS", chips(m.files)),
+("Obrazy (dHash)", f'<span class="num">{len({n for _, n in m.images})}</span>'),
             ("Inne domeny", chips(m.domains[:25])), ("Pliki strony", chips(m.assets[:20])), ("Przeczytane", chips(m.sources))]
     dl = "".join(f"<div><dt>{a}</dt><dd>{b}</dd></div>" for a, b in rows)
     text = (f'<details class="more text-more"><summary>Odczytany tekst ({len(m.text)} znaków)</summary>'
@@ -728,7 +730,7 @@ Przerywana linia między kampaniami to słabe podobieństwo (≥ {num(k.FAMILY)}
 <script src="/static/graf.js?v=4" defer></script></section>""", "g")
 
 
-TRAIT_KINDS = ("identyfikator", "osoba", "marka", "domena", "serwer", "hosting")
+TRAIT_KINDS = ("identyfikator", "zestaw", "pliki", "osoba", "marka", "domena", "serwer", "hosting")
 _walk = {"of": None}  # what walking the graph needs, worked out once per grouping
 
 
@@ -750,6 +752,8 @@ def traits(m, base) -> set:
     The firm is information only: one firm hosts hundreds of unrelated scams."""
     common = base.common
     return ({("identyfikator", x) for x in m.trackers} | {("osoba", x) for x in m.persons}
+            | {("zestaw", x) for x in m.kit if ("k", x) not in common}
+            | {("pliki", x) for x in m.files if ("f", x) not in common}
             | {("marka", x) for x in m.claimed} | {("domena", x) for x in m.domains if ("d", x) not in common}
             | {("serwer", x) for x in m.ips if ("i", x) not in common}
             | {("hosting", f"{w[0]} · {w[1]}") for x in m.ips if (w := where_is(x))})

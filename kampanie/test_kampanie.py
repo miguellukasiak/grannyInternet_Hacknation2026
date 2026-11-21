@@ -125,6 +125,46 @@ class Campaigns(unittest.TestCase):
         base = k.Base(self.ms + [shop])
         self.assertIsNone(base.place(shop, base.campaigns())["campaign"])
 
+    def test_one_kit_on_two_domains(self):
+        """Two landers, no common ID or text: the same backend API and the same own stylesheet link them."""
+        import json
+        css = ("body{margin:0}" * 60).encode()
+        lib = ("/*! jQuery */" * 60).encode()
+
+        def har(folder: Path, dom: str, page: str):
+            def entry(method, url, mime="text/html", body=b""):
+                return {"request": {"method": method, "url": url}, "response": {"status": 200, "content": {
+                    "mimeType": mime, "text": __import__("base64").b64encode(body).decode(), "encoding": "base64"}}}
+            folder.mkdir()
+            (folder / "s.har").write_text(json.dumps({"log": {"entries": [
+                entry("GET", f"https://{dom}/?ad_id=120250558396250564&utm_id=1&utm_source=fb&x=1", body=page.encode()),
+                entry("GET", f"https://{dom}/main.css", "text/css", css),
+                entry("GET", f"https://{dom}/jquery.min.js", "text/javascript", lib),  # a library: not the author's
+                entry("GET", f"https://{dom}/wp-content/themes/a/style.css", "text/css", lib),  # a theme: neither
+                entry("GET", "https://vz-6110f311-389.b-cdn.net/v.mp4", "video/mp4"),
+                entry("POST", f"https://{dom}/api/v1/trigger/field/01a11f55-dea2-71c8-81fb-5bdfdd77fe0b/"),
+                entry("POST", f"https://{dom}/api/v1/agent/persist-session-record/01a11f55-dea2-71c8-81fb")]}}))
+            (folder / "ad.info.json").write_text(json.dumps({"title": "x", "playlist_uploader_id": "1183383648198728"}))
+            return k.from_folder(folder)
+
+        with tempfile.TemporaryDirectory() as t:
+            x = har(Path(t) / "x", "civicdaybook.live", "<html><p>Pierwsza historia o czymś zupełnie innym.</p></html>")
+            y = har(Path(t) / "y", "novumfy.com", "<html><p>Druga strona, inne zdania, inna osoba.</p></html>")
+        self.assertEqual(x.kit, ["POST /api/v1/trigger/field/*/", "POST /api/v1/agent/persist-session-record/*"])
+        self.assertEqual([f.split()[1] for f in x.files], ["main.css"])
+        self.assertIn("reklama Meta 120250558396250564", x.trackers)
+        self.assertIn("strona FB 1183383648198728", x.trackers)
+        self.assertIn("vz-6110f311-389.b-cdn.net", x.domains)  # one CDN account, not all of b-cdn.net
+        self.assertEqual(k.domain_of("www.b-cdn.net"), "b-cdn.net")
+        k.add_trackers(g := k.Material(id="g", name="g"), "gtag('config','AW-18463917747');"
+                                                          "https://www.google.com/pagead/1p-conversion/18463917747/")
+        self.assertEqual(g.trackers, ["Google Ads 18463917747"])
+        x.trackers = y.trackers = []  # without the shared ad IDs, the kit and the file alone must link them
+        base = k.Base([x, y])
+        kinds = [kind for _, kind, _ in base.compare(x, y)[1]]
+        self.assertTrue({"zestaw", "pliki"} <= set(kinds))
+        self.assertGreaterEqual(base.link(x, y), k.LINK)
+
     def test_private_url_refused(self):
         with self.assertRaises(ValueError):
             k.fetch(k.Material(id="p", name="p"), "http://127.0.0.1:8501/")
