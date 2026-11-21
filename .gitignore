@@ -1,0 +1,14 @@
+.env
+lists/verdicts*.db
+lists/fb.txt
+__pycache__/
+*.pyc
+lists/shots/
+lists/teraz.json
+# per-machine overrides (server: DNS on localhost; home: collector and panel on the server)
+docker-compose.override.yml
+# the server's decisions: its panel changes them, a deploy (git push to the server) must never overwrite them
+lists/allow.txt
+lists/watpliwe.txt
+# materials to analyse: the organiser's set may not be published
+dane/

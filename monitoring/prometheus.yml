@@ -1,0 +1,13 @@
+# What the stack does, every 30 s: DNS answers (Blocky), the collector's run, the panel's queues
+global:
+  scrape_interval: 30s
+
+scrape_configs:
+  - job_name: blocky  # queries, blocks by package; per client too, so on a public server drop the client label
+    static_configs: [{targets: ["blocky:4000"]}]
+  - job_name: collector  # ads seen, verdicts, time per domain, rate limits; counters restart with the collector
+    static_configs: [{targets: ["collector:9100"]}]
+  - job_name: again  # the collector's second process judging old verdicts again
+    static_configs: [{targets: ["again:9100"]}]
+  - job_name: panel  # verdicts in the base, review queue, CERT reports, exceptions
+    static_configs: [{targets: ["panel:8080"]}]

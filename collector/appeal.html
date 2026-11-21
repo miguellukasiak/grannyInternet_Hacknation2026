@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odwołanie od blokady</title>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<style>
+  :root { --paper: #efece4; --paper-2: #e6e2d8; --ink: #151412; --ink-2: #5d584f; --rule: #cdc7ba; --red: #d3361b;
+    --green: #2f6b45; color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #141311; --paper-2: #1b1a17; --ink: #ece7dc; --ink-2: #9a948a; --rule: #34312c; --red: #ff5b3d;
+      --green: #74c08e; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
+    font: 400 16px/1.5 system-ui, sans-serif; display: grid; place-items: center; padding: 16px; }
+  main { width: 100%; max-width: 440px; }
+  h1 { font-size: 22px; margin: 0 0 6px; display: flex; align-items: center; gap: 10px; }
+  h1 i { width: 10px; height: 10px; background: var(--red); display: inline-block; }
+  p { color: var(--ink-2); margin: 0 0 20px; }
+  form { display: grid; gap: 14px; }
+  label { display: grid; gap: 4px; font-size: 14px; color: var(--ink-2); }
+  input, textarea { font: inherit; color: var(--ink); background: var(--paper-2); border: 1px solid var(--rule);
+    padding: 10px; width: 100%; }
+  textarea { resize: vertical; min-height: 140px; }
+  :focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+  button { font: inherit; font-weight: 600; padding: 11px; border: 1px solid var(--ink); background: var(--ink);
+    color: var(--paper); cursor: pointer; }
+  dialog { border: 0; padding: 32px 28px 24px; width: min(420px, calc(100% - 32px)); background: var(--paper);
+    color: var(--ink); text-align: center; box-shadow: 0 24px 80px rgb(0 0 0 / .35); }
+  dialog::backdrop { background: rgb(21 20 18 / .6); backdrop-filter: blur(3px); }
+  dialog .sign { width: 64px; height: 64px; margin: 0 auto 16px; border-radius: 50%; display: grid; place-items: center;
+    color: var(--paper); font-size: 34px; font-weight: 700; line-height: 1; background: var(--green); }
+  dialog.bad .sign { background: var(--red); }
+  dialog h2 { font-size: 22px; margin: 0 0 8px; }
+  dialog p { margin: 0 0 22px; }
+  dialog button { width: 100%; }
+  @media (prefers-reduced-motion: no-preference) {
+    dialog[open] { animation: pop .22s ease-out; }
+    @keyframes pop { from { opacity: 0; transform: scale(.94); } }
+  }
+  #state { margin: -6px 0 0; font-size: 14px; min-height: 21px; }
+  #state b { color: var(--red); }
+  #state.free b { color: var(--green); }
+  .box { position: relative; }
+  .box textarea { display: block; padding-bottom: 26px; }
+  #count { position: absolute; right: 22px; bottom: 6px; font-size: 11px; color: var(--ink-2); pointer-events: none; }
+  small { display: block; color: var(--ink-2); margin-top: 18px; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1><i></i>Odwołanie od blokady</h1>
+  <p>Twoja strona jest blokowana przez Granny Internet, a uważasz, że niesłusznie? Napisz, dlaczego. Sprawdzimy ją
+    jeszcze raz i odpowiemy mailem.</p>
+  <form id="appeal">
+    <label>Adres strony <input name="url" required maxlength="2048" placeholder="np. moj-sklep.pl" autocomplete="url"></label>
+    <p id="state" aria-live="polite"></p>
+    <label>Twój e-mail do odpowiedzi <input name="email" type="email" required maxlength="254" autocomplete="email"></label>
+    <label>Uzasadnienie <span class="box"><textarea name="note" required minlength="10" maxlength="2000"
+      placeholder="Kim jesteście, od kiedy działacie, gdzie można to sprawdzić (np. NIP, KRS, adres firmy)"></textarea>
+      <span id="count">0 / 2000</span></span></label>
+    <div class="cf-turnstile" data-sitekey="TURNSTILE_SITE" data-language="pl"></div>
+    <button>Wyślij odwołanie</button>
+  </form>
+  <small>Zapisujemy tylko adres strony, Twój e-mail i uzasadnienie, żeby odpowiedzieć na odwołanie.
+    Nie zapisujemy Twojego adresu IP.</small>
+</main>
+<dialog id="said">
+  <div class="sign" aria-hidden="true"></div>
+  <h2></h2>
+  <p></p>
+  <button type="button" autofocus>OK</button>
+</dialog>
+<script>
+const form = document.getElementById("appeal"), said = document.getElementById("said");
+said.querySelector("button").onclick = () => said.close();
+said.onclick = event => { if (event.target === said) said.close(); };  // a click on the dimmed backdrop
+function show(good, title, text) {
+  said.className = good ? "" : "bad";
+  said.querySelector(".sign").textContent = good ? "✓" : "!";
+  said.querySelector("h2").textContent = title;
+  said.querySelector("p").textContent = text;
+  said.querySelector("button").textContent = good ? "OK" : "Popraw i spróbuj ponownie";
+  said.showModal();
+}
+// the site's state while typing: blocked, doubtful (blocked too, in every mode) or let through
+const state = document.getElementById("state"), STATES = {
+  block: ["zablokowana", "Blokujemy ją jako oszustwo. Napisz poniżej, dlaczego niesłusznie."],
+  doubtful: ["oznaczona jako wątpliwa", "Takie strony też blokujemy. Napisz poniżej, dlaczego niesłusznie."],
+};
+let asked = "", wait;
+async function check() {
+  const q = form.url.value.trim();
+  if (q === asked) return;
+  asked = q;
+  if (!q) return state.replaceChildren();
+  const res = await fetch(`/api/blokada?q=${encodeURIComponent(q)}`).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (q !== asked) return;  // typed on meanwhile: that answer is the one to show
+  const [what, more] = STATES[data.verdict] || ["nie jest blokowana", "Nie ma od czego się odwołać. Jeśli mimo to się nie otwiera, sprawdź adres."];
+  state.className = data.verdict ? "" : "free";
+  if (!res || !res.ok) return state.replaceChildren(data.error || "Nie udało się sprawdzić, spróbuj ponownie.");
+  const name = document.createElement("b");
+  name.textContent = `${data.domain || data.host}: ${what}.`;
+  state.replaceChildren(name, " ", more);
+}
+form.url.addEventListener("input", () => { clearTimeout(wait); wait = setTimeout(check, 600); });
+form.url.addEventListener("change", check);
+const count = document.getElementById("count");
+const counted = () => { count.textContent = `${form.note.value.length} / ${form.note.maxLength}`; };
+form.note.addEventListener("input", counted);
+form.onsubmit = async event => {
+  event.preventDefault();
+  const res = await fetch("/api/appeal", { method: "POST", headers: { "Content-Type": "application/json", "X-Panel": "1" },
+                                           body: JSON.stringify(Object.fromEntries(new FormData(form))) }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) show(true, "Dziękujemy, odwołanie przyjęte",
+                          "Sprawdzimy stronę jeszcze raz i odpowiemy na podany e-mail.");
+  else show(false, "Nie udało się wysłać", data.error || "Coś poszło nie tak, spróbuj ponownie.");
+  if (res && res.ok) { form.reset(); asked = ""; state.replaceChildren(); counted(); }
+  if (window.turnstile) turnstile.reset();  // one answer per sending
+};
+</script>
+</body>
+</html>

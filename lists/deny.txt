@@ -1,0 +1,9 @@
+# Hand-picked scam domains, blocked in every mode. One domain per line, *. covers subdomains.
+# Asset servers (CDN) of the Chinese shop platform behind most throwaway scam shops from Meta ads: without them
+# every shop of the network breaks, also domains nobody has seen yet. Found on 20 of 23 shops.
+*.compgoo.com
+*.ocolt.com
+*.sdhahs.com
+*.hsrdkt.com
+*.dpdvx.com
+*.lndpy.com

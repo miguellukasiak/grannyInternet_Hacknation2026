@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zgłoś podejrzaną stronę</title>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<style>
+  :root { --paper: #efece4; --paper-2: #e6e2d8; --ink: #151412; --ink-2: #5d584f; --rule: #cdc7ba; --red: #d3361b;
+    --green: #2f6b45; color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #141311; --paper-2: #1b1a17; --ink: #ece7dc; --ink-2: #9a948a; --rule: #34312c; --red: #ff5b3d;
+      --green: #74c08e; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
+    font: 400 16px/1.5 system-ui, sans-serif; display: grid; place-items: center; padding: 16px; }
+  main { width: 100%; max-width: 440px; }
+  h1 { font-size: 22px; margin: 0 0 6px; display: flex; align-items: center; gap: 10px; }
+  h1 i { width: 10px; height: 10px; background: var(--red); display: inline-block; }
+  p { color: var(--ink-2); margin: 0 0 20px; }
+  form { display: grid; gap: 14px; }
+  label { display: grid; gap: 4px; font-size: 14px; color: var(--ink-2); }
+  input, textarea { font: inherit; color: var(--ink); background: var(--paper-2); border: 1px solid var(--rule);
+    padding: 10px; width: 100%; }
+  textarea { resize: vertical; min-height: 80px; }
+  :focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+  button { font: inherit; font-weight: 600; padding: 11px; border: 1px solid var(--ink); background: var(--ink);
+    color: var(--paper); cursor: pointer; }
+  dialog { border: 0; padding: 32px 28px 24px; width: min(420px, calc(100% - 32px)); background: var(--paper);
+    color: var(--ink); text-align: center; box-shadow: 0 24px 80px rgb(0 0 0 / .35); }
+  dialog::backdrop { background: rgb(21 20 18 / .6); backdrop-filter: blur(3px); }
+  dialog .sign { width: 64px; height: 64px; margin: 0 auto 16px; border-radius: 50%; display: grid; place-items: center;
+    color: var(--paper); font-size: 34px; font-weight: 700; line-height: 1; background: var(--green); }
+  dialog.bad .sign { background: var(--red); }
+  dialog h2 { font-size: 22px; margin: 0 0 8px; }
+  dialog p { margin: 0 0 22px; }
+  dialog button { width: 100%; }
+  @media (prefers-reduced-motion: no-preference) {
+    dialog[open] { animation: pop .22s ease-out; }
+    @keyframes pop { from { opacity: 0; transform: scale(.94); } }
+  }
+  small { display: block; color: var(--ink-2); margin-top: 18px; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1><i></i>Zgłoś podejrzaną stronę</h1>
+  <p>Widzisz reklamę albo sklep, który wygląda na oszustwo? Podaj adres, a nasi audytorzy go sprawdzą.</p>
+  <form id="suspect">
+    <label>Adres strony <input name="url" required maxlength="2048" placeholder="np. tani-sklep-przyklad.pl" autocomplete="off"></label>
+    <label>Co Cię zaniepokoiło? (nieobowiązkowe) <textarea name="note" maxlength="500"></textarea></label>
+    <div class="cf-turnstile" data-sitekey="TURNSTILE_SITE" data-language="pl"></div>
+    <button>Wyślij zgłoszenie</button>
+  </form>
+  <small>Nie zapisujemy Twojego adresu IP ani żadnych danych o Tobie, tylko adres strony i Twój opis.
+    Nie otwieraj strony, jeśli nie musisz, i nie podawaj na niej żadnych danych.</small>
+</main>
+<dialog id="said">
+  <div class="sign" aria-hidden="true"></div>
+  <h2></h2>
+  <p></p>
+  <button type="button" autofocus>OK</button>
+</dialog>
+<script>
+const form = document.getElementById("suspect"), said = document.getElementById("said");
+said.querySelector("button").onclick = () => said.close();
+said.onclick = event => { if (event.target === said) said.close(); };  // a click on the dimmed backdrop
+function show(good, title, text) {
+  said.className = good ? "" : "bad";
+  said.querySelector(".sign").textContent = good ? "✓" : "!";
+  said.querySelector("h2").textContent = title;
+  said.querySelector("p").textContent = text;
+  said.querySelector("button").textContent = good ? "Zgłoś kolejną" : "Popraw i spróbuj ponownie";
+  said.showModal();
+}
+form.onsubmit = async event => {
+  event.preventDefault();
+  const res = await fetch("/api/suspect", { method: "POST", headers: { "Content-Type": "application/json", "X-Panel": "1" },
+                                            body: JSON.stringify(Object.fromEntries(new FormData(form))) }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) show(true, "Dziękujemy, zgłoszenie przyjęte",
+                          "Audytor sprawdzi tę stronę. Jeśli to oszustwo, zablokujemy ją dla wszystkich.");
+  else show(false, "Nie udało się wysłać", data.error || "Coś poszło nie tak, spróbuj ponownie.");
+  if (res && res.ok) form.reset();
+  if (window.turnstile) turnstile.reset();  // one answer per sending
+};
+</script>
+</body>
+</html>

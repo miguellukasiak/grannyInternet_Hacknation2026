@@ -1,0 +1,538 @@
+# Źródła list blokowania. Updater czyta ten plik co 30 s, więc zmiany działają bez restartu.
+#   package  pakiet z blocky.yml: scam, watpliwe, reklamy, smart-tv, windows, bez-google, bez-facebooka, dorosli, hazard
+#   every    co ile minut pobierać (HaGeZi i OISD proszą o nie częściej niż raz na dobę)
+#   license  sprawdź przed użyciem komercyjnym; "nieznana" i "brak" trzeba wyjaśnić z autorem
+#   enabled  false = pominięta (np. licencje NC); usunięcie lub wyłączenie kasuje jej domeny z bazy
+# Pominięte martwe i zagnieżdżone listy oraz powody: LISTY.md
+
+# Pakiet "top" w blocky.yml: tylu najpopularniejszych stron (Tranco, z subdomenami) tryby inne niż ultra nie blokują
+safe_top = 1000
+
+# co 5 min, prośba CERT
+[[source]]
+name = "cert"
+url = "https://hole.cert.pl/domains/v2/domains.txt"
+package = "scam"
+every = 5
+license = "CERT Polska: dowolny cel"
+
+[[source]]
+name = "kad"
+url = "https://raw.githubusercontent.com/FiltersHeroes/KADhosts/master/KADhosts.txt"
+package = "scam"
+every = 60
+license = "CC BY-SA 4.0"
+
+[[source]]
+name = "hagezi-fake"
+url = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/fake.txt"
+package = "scam"
+every = 1440
+license = "GPL-3.0"
+
+# 2 mln; lżejsze: tif.medium.txt, tif.mini.txt
+[[source]]
+name = "hagezi-tif"
+url = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/tif.txt"
+package = "scam"
+every = 1440
+license = "GPL-3.0"
+
+# domeny z kolektora reklam Meta
+[[source]]
+name = "kolektor-fb"
+url = "file:///lists/fb.txt"
+package = "scam"
+every = 1
+license = "własna"
+
+# ręcznie dopisane: CDN-y sieci scamowych sklepów
+[[source]]
+name = "reczne-scam"
+url = "file:///lists/deny.txt"
+package = "scam"
+every = 1
+license = "własna"
+
+# ręcznie dopisane: drogie obietnice zdrowotne, nie udowodnione oszustwo
+[[source]]
+name = "reczne-watpliwe"
+url = "file:///lists/watpliwe.txt"
+package = "watpliwe"
+every = 1
+license = "własna"
+
+[[source]]
+name = "oisd-nsfw"
+url = "https://raw.githubusercontent.com/sjhgvr/oisd/main/domainswild_nsfw.txt"
+package = "dorosli"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "hagezi-gambling"
+url = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/gambling.txt"
+package = "hazard"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "1hosts-lite"
+url = "https://raw.githubusercontent.com/badmojr/1Hosts/master/Lite/domains.wildcards"
+package = "reklamy"
+every = 1440
+license = "MPL-2.0"
+
+# najbardziej agresywna: 164 z top 1000
+[[source]]
+name = "1hosts-xtra"
+url = "https://raw.githubusercontent.com/badmojr/1Hosts/master/Xtra/domains.wildcards"
+package = "reklamy"
+every = 1440
+license = "MPL-2.0"
+
+[[source]]
+name = "abpindo"
+url = "https://raw.githubusercontent.com/ABPindo/indonesianadblockrules/master/subscriptions/domain.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "abpvn-list"
+url = "https://abpvn.com/android/abpvn.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "ad-wars"
+url = "https://raw.githubusercontent.com/jdlingyu/ad-wars/master/hosts"
+package = "reklamy"
+every = 1440
+license = "brak"
+
+[[source]]
+name = "adaway"
+url = "https://raw.githubusercontent.com/AdAway/adaway.github.io/master/hosts.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0+"
+
+[[source]]
+name = "add-2o7net"
+url = "https://raw.githubusercontent.com/FadeMind/hosts.extras/master/add.2o7Net/hosts"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "adguard-base-filter"
+url = "https://filters.adtidy.org/extension/chromium/filters/2.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "adguard-dns-filter"
+url = "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "adguard-mobile-ads-filter"
+url = "https://filters.adtidy.org/extension/chromium/filters/11.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "adguard-russian-filter"
+url = "https://filters.adtidy.org/extension/chromium/filters/1.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "adguard-social-media-filter"
+url = "https://filters.adtidy.org/extension/chromium/filters/4.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "adguard-tracking-protection-filter"
+url = "https://filters.adtidy.org/extension/chromium/filters/3.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "anti-ad"
+url = "https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/anti-ad-domains.txt"
+package = "reklamy"
+every = 1440
+license = "MIT"
+
+[[source]]
+name = "antipopads"
+url = "https://raw.githubusercontent.com/Yhonay/antipopads/master/hosts"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "anudeep-blacklist"
+url = "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt"
+package = "reklamy"
+every = 1440
+license = "MIT"
+
+[[source]]
+name = "barbblock"
+url = "https://raw.githubusercontent.com/paulgb/BarbBlock/master/blacklists/domain-list.txt"
+package = "reklamy"
+every = 1440
+license = "MIT"
+
+[[source]]
+name = "bkrucarci-turk-adlist"
+url = "https://raw.githubusercontent.com/bkrucarci/turk-adlist/master/hosts"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "bulgarian-list"
+url = "https://stanev.org/abp/adblock_bg.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "cameleon"
+url = "http://sysctl.org/cameleon/hosts"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+# NC: tylko do użytku niekomercyjnego
+[[source]]
+name = "certyficateit"
+url = "https://raw.githubusercontent.com/MajkiIT/polish-ads-filter/master/polish-pihole-filters/hostfile.txt"
+package = "reklamy"
+every = 1440
+license = "CC BY-NC-SA 4.0"
+enabled = false
+
+[[source]]
+name = "disconnect-ads"
+url = "https://s3.amazonaws.com/lists.disconnect.me/simple_ad.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "disconnect-malvertising"
+url = "https://s3.amazonaws.com/lists.disconnect.me/simple_malvertising.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "disconnect-tracking"
+url = "https://s3.amazonaws.com/lists.disconnect.me/simple_tracking.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "easylist"
+url = "https://raw.githubusercontent.com/easylist/easylist/gh-pages/easylist.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0 / CC BY-SA 3.0"
+
+[[source]]
+name = "easylist-china"
+url = "https://easylist-downloads.adblockplus.org/easylistchina.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "easylist-czech-slovak"
+url = "https://raw.githubusercontent.com/tomasko126/easylistczechandslovak/master/filters.txt"
+package = "reklamy"
+every = 1440
+license = "CC BY-SA 4.0"
+
+[[source]]
+name = "easylist-dutch"
+url = "https://easylist-downloads.adblockplus.org/easylistdutch.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "easylist-germany"
+url = "https://easylist.to/easylistgermany/easylistgermany.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0 / CC BY-SA 3.0"
+
+[[source]]
+name = "easylist-hebrew"
+url = "https://raw.githubusercontent.com/easylist/EasyListHebrew/master/EasyListHebrew.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "easylist-italy"
+url = "https://easylist-downloads.adblockplus.org/easylistitaly.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0 / CC BY-SA 3.0"
+
+[[source]]
+name = "easylist-lithuania"
+url = "https://raw.githubusercontent.com/EasyList-Lithuania/easylist_lithuania/master/easylistlithuania.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "easyprivacy"
+url = "https://raw.githubusercontent.com/easylist/easylist/gh-pages/easyprivacy.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0 / CC BY-SA 3.0"
+
+[[source]]
+name = "fanboy-annoyance"
+url = "https://raw.githubusercontent.com/easylist/easylist/gh-pages/fanboy-annoyance.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "finnish-easylist-addition"
+url = "https://raw.githubusercontent.com/finnish-easylist-addition/finnish-easylist-addition/master/Finland_adb.txt"
+package = "reklamy"
+every = 1440
+license = "Unlicense"
+
+[[source]]
+name = "frellwit-swedish"
+url = "https://raw.githubusercontent.com/lassekongo83/Frellwits-filter-lists/master/Frellwits-Swedish-Hosts-File.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+# porzucona 2024
+[[source]]
+name = "goodbye-ads"
+url = "https://raw.githubusercontent.com/jerryn70/GoodbyeAds/master/Hosts/GoodbyeAds.txt"
+package = "reklamy"
+every = 1440
+license = "MIT"
+
+[[source]]
+name = "hagezi-multi-ultimate"
+url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/ultimate.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+# NC: tylko do użytku niekomercyjnego
+[[source]]
+name = "hblock"
+url = "https://hblock.molinero.dev/hosts_domains.txt"
+package = "reklamy"
+every = 1440
+license = "MIT, ale zawiera someonewhocares (NC)"
+enabled = false
+
+[[source]]
+name = "hostsvn"
+url = "https://raw.githubusercontent.com/bigdargon/hostsVN/master/hosts"
+package = "reklamy"
+every = 1440
+license = "MIT"
+
+[[source]]
+name = "hufilter"
+url = "https://raw.githubusercontent.com/hufilter/hufilter/gh-pages/hufilter-dns.txt"
+package = "reklamy"
+every = 1440
+license = "CC BY-4.0"
+
+[[source]]
+name = "latvian-list"
+url = "https://raw.githubusercontent.com/Latvian-List/adblock-latvian/master/lists/latvian-list.txt"
+package = "reklamy"
+every = 1440
+license = "brak"
+
+# porzucona 2023
+[[source]]
+name = "lightswitch05-ads-tracking"
+url = "https://www.github.developerdan.com/hosts/lists/ads-and-tracking-extended.txt"
+package = "reklamy"
+every = 1440
+license = "Apache-2.0"
+
+# agresywna, porzucona 2023
+[[source]]
+name = "lightswitch05-tracking-aggressive"
+url = "https://www.github.developerdan.com/hosts/lists/tracking-aggressive-extended.txt"
+package = "reklamy"
+every = 1440
+license = "Apache-2.0"
+
+[[source]]
+name = "liste-ar"
+url = "https://easylist-downloads.adblockplus.org/Liste_AR.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "liste-fr"
+url = "https://easylist-downloads.adblockplus.org/liste_fr.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+# NC: tylko do użytku niekomercyjnego
+[[source]]
+name = "mvps-hosts"
+url = "http://winhelp2002.mvps.org/hosts.txt"
+package = "reklamy"
+every = 1440
+license = "CC BY-NC-SA"
+enabled = false
+
+# blokuje całego Facebooka, WhatsAppa, Instagrama
+[[source]]
+name = "no-facebook"
+url = "https://raw.githubusercontent.com/jmdugan/blocklists/master/corporations/facebook/all"
+package = "bez-facebooka"
+every = 1440
+license = "nieznana"
+
+# blokuje całe Google
+[[source]]
+name = "no-g"
+url = "https://raw.githubusercontent.com/nickspaargaren/no-google/master/wildcards-domains"
+package = "bez-google"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "notrack-tracker-blocklist"
+url = "https://gitlab.com/quidsup/notrack-blocklists/raw/master/notrack-blocklist.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+# porzucona 2023
+[[source]]
+name = "notracking"
+url = "https://raw.githubusercontent.com/notracking/hosts-blocklists/master/dnscrypt-proxy/dnscrypt-proxy.blacklist.txt"
+package = "reklamy"
+every = 1440
+license = "brak"
+
+# porzucona, blokuje cdc.gov; adres zwraca 404
+[[source]]
+name = "nsa-blocklist"
+url = "https://storage.googleapis.com/nsablocklist/hosts"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+enabled = false
+
+[[source]]
+name = "oisd"
+url = "https://raw.githubusercontent.com/sjhgvr/oisd/main/domainswild_big.txt"
+package = "reklamy"
+every = 1440
+license = "GPL-3.0"
+
+[[source]]
+name = "perflyst-smarttv"
+url = "https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV.txt"
+package = "smart-tv"
+every = 1440
+license = "MIT"
+
+[[source]]
+name = "peter-lowe"
+url = "https://pgl.yoyo.org/as/serverlist.php?hostformat=domains&mimetype=plaintext"
+package = "reklamy"
+every = 1440
+license = "brak formalnej, „łącz śmiało”"
+
+[[source]]
+name = "ru-adlist"
+url = "https://easylist-downloads.adblockplus.org/advblock.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+# NC: tylko do użytku niekomercyjnego
+[[source]]
+name = "someonewhocares"
+url = "https://someonewhocares.org/hosts/hosts"
+package = "reklamy"
+every = 1440
+license = "tylko niekomercyjnie"
+enabled = false
+
+# NC: tylko do użytku niekomercyjnego
+[[source]]
+name = "steven-black"
+url = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+package = "reklamy"
+every = 1440
+license = "MIT, ale zawiera someonewhocares i MVPS (NC)"
+enabled = false
+
+[[source]]
+name = "uncheckyads"
+url = "https://raw.githubusercontent.com/FadeMind/hosts.extras/master/UncheckyAds/hosts"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "wally3k-personal"
+url = "https://v.firebog.net/hosts/static/w3kbl.txt"
+package = "reklamy"
+every = 1440
+license = "nieznana"
+
+[[source]]
+name = "windowsspyblocker-spy"
+url = "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt"
+package = "windows"
+every = 1440
+license = "MIT"
+
+# porzucona
+[[source]]
+name = "yhosts"
+url = "https://raw.githubusercontent.com/VeleSila/yhosts/master/hosts"
+package = "reklamy"
+every = 1440
+license = "brak"
+
+[[source]]
+name = "youslist"
+url = "https://raw.githubusercontent.com/yous/YousList/master/youslist.txt"
+package = "reklamy"
+every = 1440
+license = "brak"

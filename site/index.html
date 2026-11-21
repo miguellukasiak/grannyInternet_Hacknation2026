@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>grannyinternet: oszukańcza reklama, która się nie otwiera</title>
+<meta name="description" content="Antyscamowy DNS. Czytamy reklamy z Facebooka i Instagrama wyświetlane w Polsce i blokujemy sklepy-widma, fałszywych lekarzy i podróbki banków, zanim ktoś poda na nich dane.">
+<meta property="og:title" content="grannyinternet: babcia kliknęła, nic się nie stało">
+<meta property="og:description" content="Polski antyscamowy DNS: blokujemy oszustwa z reklam na Facebooku i Instagramie. Zgłoś podejrzaną stronę albo zostań audytorem.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#efece4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141311" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts.css">
+<link rel="stylesheet" href="/style.css?v=20261121">
+<script src="/main.js?v=20261116" defer></script>
+</head>
+<body>
+<a class="skip" href="#tresc">Przejdź do treści</a>
+
+<header class="top wrap">
+  <a class="mark" href="/" aria-label="grannyinternet, strona główna"><i></i>granny<span>internet</span></a>
+  <nav aria-label="Główna">
+    <a href="#razem">Razem</a>
+    <a href="#dane">Dane</a>
+    <a href="/jury/">Dla jury</a>
+    <a class="nav-appeal" href="https://panel.example.org/odwolanie"><span class="wide">Odwołanie od blokady</span><span class="narrow">Strona zablokowana? Odwołaj się</span></a>
+    <a class="nav-line" href="https://panel.example.org/login">Panel audytora</a>
+    <a class="nav-cta" href="https://panel.example.org/zglos">Zgłoś stronę</a>
+  </nav>
+</header>
+
+<main id="tresc">
+  <section class="hero wrap">
+    <h1>Babcia kliknęła <span>Nic się nie stało</span></h1>
+    <div class="hero-grid">
+      <div class="hero-copy">
+        <p class="lead">Polski antyscamowy DNS. Codziennie czytamy reklamy z Facebooka i Instagrama i blokujemy
+          sklepy-widma, fałszywych lekarzy i podróbki banków. W sieci, która z nas korzysta, taka strona po prostu
+          się nie wczyta.</p>
+        <div class="actions">
+          <a class="btn btn-line" href="https://panel.example.org/login">Zostań audytorem</a>
+        </div>
+      </div>
+
+      <figure class="case" id="case">
+        <div class="post" aria-hidden="true">
+          <div class="post-head"><span class="avatar">MZ</span><div><b>Dr Marek Zdrowiecki</b><small>Sponsorowane</small></div></div>
+          <p class="post-text">Ból kolan zniknął po 7 dniach! Zostało ostatnie 12 opakowań. Płatność przy odbiorze.</p>
+          <div class="post-price"><s>299 zł</s><strong>89 zł</strong><span>−70% tylko dziś</span></div>
+          <div class="post-foot"><span>zdrowe-kolano-pl.shop</span><span class="post-buy">Kup teraz</span></div>
+          <div class="stamp">Zablokowane</div>
+        </div>
+        <ol class="checks" aria-label="Co sprawdził system">
+          <li><span>wiek domeny</span><b>3 dni</b></li>
+          <li><span>NIP, KRS, REGON</span><b>brak</b></li>
+          <li><span>strona na Facebooku</span><b>zmyślony ekspert</b></li>
+          <li><span>obietnica zdrowotna</span><b>bez firmy</b></li>
+          <li><span>wygląd strony</span><b>„za pobraniem”</b></li>
+          <li><span>model AI</span><b>oszustwo</b></li>
+        </ol>
+        <figcaption>Reklama zmyślona, sygnały prawdziwe: każdy łapie oszustwa w naszych danych.
+          <button type="button" class="replay" id="replay">Pokaż jeszcze raz</button></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="ticker" aria-labelledby="ticker-title">
+    <div class="ticker-track">
+      <ul class="ticker-set">
+        <li>płatność przy odbiorze <b>×22,5</b></li><li>jackpot <b>niemal zawsze</b></li>
+        <li>za pobraniem <b>×12,7</b></li><li>babcia <b>×10,1</b></li><li>natychmiast <b>×9,1</b></li>
+        <li>kolana <b>×8,1</b></li><li>emeryt <b>×7,8</b></li><li>szok <b>×7,6</b></li><li>farmaceuta <b>×7,6</b></li>
+        <li>żylaki <b>×7,4</b></li><li>ból <b>×6,9</b></li><li>zmarszczki <b>×6,4</b></li><li>bonus <b>×6,3</b></li>
+        <li>pasożyty <b>×6,3</b></li><li>prostata <b>×6,2</b></li><li>apteka <b>×4,6</b></li><li>lekarz <b>×4,1</b></li>
+        <li>profesor <b>×4,1</b></li><li>sekret <b>×4,0</b></li><li>cud <b>×3,3</b></li><li>milion <b>×3,3</b></li>
+        <li>cukrzyca <b>×3,0</b></li>
+      </ul>
+    </div>
+    <div class="ticker-foot"><p class="ticker-note wrap" id="ticker-title">Ile razy częściej słowo pada w reklamie oszusta niż w uczciwej.<sup><a href="#z1" aria-label="źródło 1">1</a></sup>
+      Z takich słów system sam układa kolejne zapytania do biblioteki reklam.</p></div>
+  </section>
+
+  <section class="together" id="razem" aria-labelledby="together-title">
+    <div class="wrap">
+      <h2 id="together-title">Razem widzimy więcej niż jakikolwiek filtr</h2>
+      <p class="lead-sm">Oszuści zakładają nowe strony szybciej, niż ktokolwiek zdąży je sprawdzić w pojedynkę.
+        Każde zgłoszenie i każda ocena od razu chronią wszystkich, którzy z nami są: Twoich rodziców, sąsiadów i Ciebie.</p>
+
+      <dl class="scale">
+        <div class="reveal"><dt>stracili Polacy na oszukańczych płatnościach w&nbsp;trzy miesiące</dt><dd data-count>199,6&nbsp;mln&nbsp;zł</dd>
+          <p>Ponad 108 tysięcy oszukańczych transakcji kartą i przelewem, średnio 1&nbsp;837&nbsp;zł każda.<sup><a href="#z2" aria-label="źródło 2">2</a></sup></p></div>
+        <div class="reveal"><dt>seniorów zetknęło się z próbą oszustwa</dt><dd data-count>46%</dd>
+          <p>Prawie co drugi wśród osób po sześćdziesiątce.<sup><a href="#z3" aria-label="źródło 3">3</a></sup></p></div>
+        <div class="reveal"><dt>zgłoszeń do CERT Polska to oszustwa</dt><dd data-count>97%</dd>
+          <p>Z 260&nbsp;783 incydentów w 2025: phishing, fałszywe inwestycje, sklepy-widma.<sup><a href="#z4" aria-label="źródło 4">4</a></sup></p></div>
+      </dl>
+
+      <ol class="path reveal">
+        <li><h3>Zgłaszasz</h3>
+          <p>Dziwna reklama w Twoim telefonie albo w telefonie mamy? Wklej adres. Bez konta, bez imienia, bez e-maila.</p></li>
+        <li><h3>Oceniasz</h3>
+          <p>Z kontem audytora oceniasz strony ze zrzutem ekranu, wiekiem domeny i danymi firmy z rejestrów.
+            Twoja decyzja trafia na listę blokad dla wszystkich.</p></li>
+        <li><h3>Zbierasz punkty</h3>
+          <p>Za każdą ocenę i każde zgłoszenie z konta. Każda rzecz liczy się raz, więc klikanie tam i z powrotem nic
+            nie daje. Księga punktów już działa.</p></li>
+        <li><h3>Rangi i ranking <small>wkrótce</small></h3>
+          <p>Odznaki za pierwsze kroki i za wytrwałość, rangi za punkty, wspólna tablica najlepszych audytorów.</p></li>
+      </ol>
+
+      <article class="training reveal">
+        <p class="training-tag">Przygotowujemy<span class="wip" aria-hidden="true"><i></i><i></i><i></i></span></p>
+        <h3>Szkolenia, krótkie i po ludzku</h3>
+        <ul>
+          <li><b>Dla seniorów i ich rodzin.</b> Jak poznać sklep-widmo, fałszywą dopłatę do paczki i „inwestycję”
+            z twarzą znanej osoby. Co zrobić, kiedy już się kliknęło.</li>
+          <li><b>Dla audytorów.</b> Rejestry KRS, CEIDG i VAT, wiek domeny, klony sklepów. Ukończone szkolenie
+            też da punkty.</li>
+          <li><b>Dla klubów seniora, bibliotek i szkół.</b> Spotkanie na prawdziwych reklamach, które złapaliśmy
+            w tym tygodniu.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section class="how wrap" id="jak" aria-labelledby="how-title">
+    <div class="how-side">
+      <h2 id="how-title">Od reklamy do blokady</h2>
+      <p class="muted">Każdy krok zostawia ślad, który audytor widzi w panelu.</p>
+    </div>
+    <ol class="steps">
+      <li class="reveal"><div class="scene sc-feed" aria-hidden="true"><div><i></i><i class="bad"></i><i></i><i></i><i class="bad"></i><i></i></div></div>
+        <h3>Czytamy reklamy</h3>
+        <p>Z publicznej Biblioteki reklam Meta pobieramy reklamy wyświetlane w Polsce.</p></li>
+      <li class="reveal"><div class="scene sc-browser" aria-hidden="true"><b></b><i class="sc-page"></i><i class="sc-btn"></i><i class="sc-cursor"></i><i class="sc-flash"></i></div>
+        <h3>Klikamy za Ciebie</h3>
+        <p>Prawdziwa przeglądarka otwiera stronę z reklamy, robi zrzut ekranu jako dowód i czyta regulamin
+          i kontakt. Nie pobiera żadnych plików.</p></li>
+      <li class="reveal"><div class="scene sc-reg" aria-hidden="true"><p><span>NIP</span><b>brak</b></p><p><span>KRS</span><b>brak</b></p><p><span>REGON</span><b>brak</b></p></div>
+        <h3>Sprawdzamy firmę</h3>
+        <p>NIP, KRS i REGON ze strony sprawdzamy w GUS, na białej liście VAT, w CEIDG i w unijnym VIES. Sklep bez
+          danych firmy łamie polskie prawo.</p></li>
+      <li class="reveal"><div class="scene sc-judge" aria-hidden="true"><p><span>AI 1</span><i class="to-hi"></i></p><p><span>AI 2</span><i class="to-lo"></i></p><b>audytor</b></div>
+        <h3>Oceniają maszyny i człowiek</h3>
+        <p>Dwa modele AI na naszym sprzęcie dają swoje zdanie. Wątpliwy przypadek trafia do audytora razem ze zrzutem
+          ekranu i powodem.</p></li>
+      <li class="reveal"><svg class="scene sc-net" viewBox="0 0 132 92" aria-hidden="true"><circle class="ring" cx="66" cy="46" r="20"/><rect class="c" x="2" y="41" width="20" height="10"/><rect class="c" x="110" y="41" width="20" height="10"/><path class="e1" pathLength="1" d="M54 38Q38 30 28 19"/><path class="e2" pathLength="1" d="M78 38Q94 30 104 19"/><path class="e3" pathLength="1" d="M54 54Q38 62 28 73"/><path class="e4" pathLength="1" d="M78 54Q94 62 104 73"/><g class="sib e1"><rect class="c" x="6" y="6" width="30" height="13"/><rect class="ln" x="10" y="11" width="16" height="3"/></g><g class="sib e2"><rect class="c" x="96" y="6" width="30" height="13"/><rect class="ln" x="100" y="11" width="16" height="3"/></g><g class="sib e3"><rect class="c" x="6" y="73" width="30" height="13"/><rect class="ln" x="10" y="78" width="16" height="3"/></g><g class="sib e4"><rect class="c" x="96" y="73" width="30" height="13"/><rect class="ln" x="100" y="78" width="16" height="3"/></g><g class="hub"><rect class="c" x="46" y="38" width="40" height="16"/><rect class="ln" x="51" y="42.5" width="22" height="3"/><rect class="ln" x="51" y="47.5" width="13" height="3"/></g><text class="e1" x="38" y="32">NIP</text><text class="e2" x="94" y="32">serwer</text><text class="e3" x="38" y="65">piksel</text><text class="e4" x="94" y="65">FB</text></svg>
+        <h3>Blokujemy całą sieć</h3>
+        <p>Gdy jedna domena wpada, szukamy jej rodzeństwa: tej samej strony na Facebooku, tego samego NIP, serwera,
+          piksela reklamowego i klonów treści.</p></li>
+    </ol>
+  </section>
+
+  <section class="numbers" id="dane" aria-labelledby="numbers-title">
+    <div class="wrap">
+      <h2 id="numbers-title">Stan bazy</h2>
+      <dl class="stat-grid">
+        <div class="stat reveal"><dt>domen sprawdzonych</dt><dd data-count data-live="checked">9&nbsp;173</dd><p>z reklam, z list blokowania i z rejestrów nowych domen</p></div>
+        <div class="stat reveal"><dt>zablokowanych</dt><dd data-count data-live="blocked">3&nbsp;424</dd><p>oszustwa z reklam i podróbki polskich marek</p></div>
+        <div class="stat reveal"><dt>decyzji ludzi</dt><dd data-count data-live="human">2&nbsp;200</dd><p>każda z historią: kto, kiedy, dlaczego</p></div>
+        <div class="stat reveal"><dt>list blokowania</dt><dd data-count>~70</dd><p>CERT Polska, KAD, HaGeZi, OISD i inne, z pochodzeniem każdej domeny</p></div>
+      </dl>
+      <p class="numbers-note"><span id="numbers-note">Liczby z bazy projektu.</span><sup><a href="#z5" aria-label="źródło 5">5</a></sup></p>
+    </div>
+  </section>
+
+  <section class="gap" aria-labelledby="gap-title">
+    <div class="wrap gap-grid">
+      <div>
+        <h2 id="gap-title">Tych <span>oszustw</span> prawie nikt inny nie blokuje</h2>
+        <p class="lead-sm">Sprawdziliśmy 995 naszych blokad z reklam w dwóch dużych filtrach DNS, Quad9
+          i Cloudflare for Families. Znały <b class="hl">21</b>.<sup><a href="#z6" aria-label="źródło 6">6</a></sup> Lista ostrzeżeń CERT Polska miała 22 z 996.<sup><a href="#z7" aria-label="źródło 7">7</a></sup></p>
+        <ul class="legend">
+          <li><i class="k-known"></i>znane Quad9 i Cloudflare for Families: 21</li>
+          <li><i class="k-ours"></i>blokowane tylko przez nas: 974</li>
+        </ul>
+        <dl class="gap-bars reveal">
+          <div><dt>nasze blokady z reklam</dt><dd><i></i><b data-count>995</b></dd></div>
+          <div class="known"><dt>znane Quad9 i Cloudflare for Families</dt><dd><i></i><b data-count>21</b></dd></div>
+        </dl>
+      </div>
+      <div class="dots" id="dots" role="img" aria-label="995 kwadratów, z których 21 jest zaznaczonych: tyle naszych blokad z reklam znały duże filtry DNS"></div>
+    </div>
+  </section>
+
+  <section class="join wrap" aria-label="Dołącz">
+    <a class="join-card join-report" href="https://panel.example.org/zglos">
+      <h2>Widzisz podejrzaną reklamę?</h2>
+      <p>Wklej adres strony. Bez konta i bez danych o sobie. Sprawdzi ją audytor.</p>
+      <span class="join-go">Zgłoś stronę</span>
+    </a>
+    <a class="join-card join-audit" href="https://panel.example.org/login">
+      <h2>Masz oko do oszustw?</h2>
+      <p>Zostań audytorem i oceniaj wątpliwe strony ze zrzutem ekranu i danymi firmy z rejestrów. Za każdą ocenę
+        zbierasz punkty.</p>
+      <span class="join-go">Załóż konto</span>
+    </a>
+    <p class="soon">Wkrótce: ochrona telefonu jednym ustawieniem (prywatny DNS).</p>
+  </section>
+
+  <section class="sources wrap" aria-labelledby="sources-title">
+    <h2 id="sources-title">Źródła</h2>
+    <ol>
+      <li id="z1">Własne dane: 3&nbsp;670 reklam zablokowanych lub wątpliwych i 3&nbsp;271 przepuszczonych.</li>
+      <li id="z2">NBP, <a href="https://nbp.pl/wp-content/uploads/2026/01/Informacja-o-transakcjach-oszukanczych_2025Q3.pdf">Informacja o transakcjach oszukańczych, III kwartał 2025</a>: 199,6&nbsp;mln&nbsp;zł, ponad 108 tys. transakcji kartą i przelewem.</li>
+      <li id="z3">Bank Pocztowy i SW Research, badanie „Cyberdojrzali”, koniec 2025: 1&nbsp;032 osoby, w tym 368 po sześćdziesiątce. Omówienia: <a href="https://www.infor.pl/prawo/nowosci-prawne/7498571,oszustwa-wciaz-skuteczne-co-drugi-senior-ma-z-nimi-do-czynienia-mimo-rosnacej-wiedzy.html">infor.pl</a>, <a href="https://bank.pl/niemal-polowa-seniorow-deklaruje-kontakt-z-probami-wyludzen-wyniki-badania-banku-pocztowego/">bank.pl</a>.</li>
+      <li id="z4">CERT Polska, <a href="https://cert.pl/uploads/docs/Raport_CP_2025.pdf">Raport roczny 2025</a>, s.&nbsp;118: 253&nbsp;238 oszustw komputerowych wśród 260&nbsp;783 incydentów.</li>
+      <li id="z5">Własne dane: liczby na żywo z bazy projektu. Listy blokowania z konfiguracji kolektora, każda domena z zapisanym pochodzeniem.</li>
+      <li id="z6">Własny pomiar: 995 domen zablokowanych z reklam zapytanych w <a href="https://quad9.net">Quad9</a> i <a href="https://one.one.one.one/family/">Cloudflare for Families</a>.</li>
+      <li id="z7">Własny pomiar na <a href="https://cert.pl/lista-ostrzezen/">Liście ostrzeżeń CERT Polska</a>, 996 domen.</li>
+    </ol>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <p class="foot-mark" aria-hidden="true">granny<span>internet</span></p>
+    <div class="foot-row">
+      <p>Projekt inżynierski, 2026. Bez ciasteczek, analityki i zewnętrznych skryptów.<br>
+        Pismo: Atkinson Hyperlegible Next, zaprojektowane przez Braille Institute dla osób słabowidzących, cyfry Libre Franklin.</p>
+      <nav aria-label="Stopka">
+        <a href="https://panel.example.org/zglos">Zgłoś stronę</a>
+        <a href="https://panel.example.org/login">Panel audytora</a>
+        <a href="https://panel.example.org/odwolanie">Odwołanie od blokady</a>
+        <a href="/jury/">Dla jury</a>
+      </nav>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

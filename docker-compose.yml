@@ -1,0 +1,171 @@
+# Docker keeps every log line with no limit: WARP alone writes ~80 MB a day of a harmless D-Bus warning
+x-logging: &logging
+  driver: json-file
+  options: {max-size: 10m, max-file: "2"}
+
+services:
+  kampanie:  # the campaign demonstrator alone: `docker compose up --build kampanie`, then http://127.0.0.1:8501
+    build: ./kampanie
+    image: kampanie
+    environment:
+      ONLINE: ${ONLINE-1}  # 0 = no RDAP lookups, nothing leaves the container except URLs typed in the GUI
+    ports: ["127.0.0.1:8501:8501"]
+    volumes:
+      - ./dane:/dane:ro  # materials to group, one folder per incident (not in the repo)
+      - kampanie:/data  # extracted features and materials added in the GUI
+    restart: unless-stopped
+    logging: *logging
+
+  blocky:
+    image: ghcr.io/0xerr0r/blocky:v0.35.0
+    ports:  # on a public server never open 53 to the world (open resolver = DDoS amplifier), use DoT/DoH
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "127.0.0.1:4000:4000"  # API, metrics and plain-HTTP DoH, local only
+    volumes:
+      - ./blocky.yml:/app/config.yml:ro
+      - ./lists:/lists:ro
+      - data:/data:ro
+    depends_on:
+      lists:
+        condition: service_healthy  # never serve DNS before the packages exist
+    restart: unless-stopped
+    logging: *logging
+
+  lists:  # sources.toml -> one SQLite base -> package files for Blocky
+    build: ./collector  # the one image for lists, collector, panel and home: built and unpacked once, not four times
+    image: inz-app  # (on the server's 2 busy cores each copy took minutes); lists runs both at home and on the server
+    command: ["python", "lists.py"]
+    environment:
+      BLOCKY: ${BLOCKY-http://blocky:4000}  # empty in the server's .env: no DNS there, so no package files
+    volumes:
+      - ./sources.toml:/config/sources.toml:ro
+      - ./lists:/lists:ro
+      - data:/data
+    healthcheck:
+      test: ["CMD", "test", "-f", "/data/ready"]
+      interval: 10s
+      start_period: 20m  # the first run downloads ~70 lists
+    restart: unless-stopped
+    logging: *logging
+
+  collector:
+    image: inz-app  # built by lists
+    pull_policy: never
+    init: true  # xvfb-run as PID 1 never gets the "screen ready" signal and hangs
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WARP_PROXY: socks5://warp:1080  # a bot wall that stays is tried once more through Cloudflare's address
+      HF_HOME: /models
+      HF_HUB_OFFLINE: "1"  # ModernBERT's weights are put into the volume by hand, never downloaded at start
+      JUDGE_AGAIN: apart  # the service below does it
+    extra_hosts: ["host.docker.internal:host-gateway"]  # on a Linux server too: the tunnel's end at home's relay
+    volumes:
+      - ./lists:/lists
+      - verdicts:/verdicts
+      - models:/models
+    networks: [outside]  # its browser opens scam pages: a redirect to panel:8080 or blocky:4000 must find nothing
+    restart: on-failure  # Blocky is out of reach: a home-mode reload fails ("publish failed"), its 1 h refresh reads fb.txt
+    logging: *logging
+
+  again:  # the same collector judging old verdicts again, with its own browser, while the one above collects
+    image: inz-app  # built by lists
+    pull_policy: never
+    init: true
+    command: ["xvfb-run", "-a", "python", "collector.py", "again"]  # a screen, like the collector's CMD
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WARP_PROXY: socks5://warp:1080
+      HF_HOME: /models
+      HF_HUB_OFFLINE: "1"
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ./lists:/lists
+      - verdicts:/verdicts
+      - models:/models
+    networks: [outside]
+    restart: on-failure
+    logging: *logging
+
+  home:  # only on the home PC when the rest runs on a server: `docker compose up -d home`, then the SSH tunnel
+    profiles: [home]
+    image: inz-app  # built by lists
+    pull_policy: never
+    command: python home.py
+    env_file: .env
+    ports: ["127.0.0.1:8765:8765"]  # reachable only by the tunnel, never from the home network
+    extra_hosts: ["host.docker.internal:host-gateway"]  # the server's panel at the tunnel's -L end
+    volumes:
+      - ./lists:/lists  # the server's fb.txt, allow.txt and watpliwe.txt for home's Blocky
+    restart: unless-stopped
+    logging: *logging
+
+  warp:  # Cloudflare WARP (official package) as a proxy, only for the collector's walled pages; no port published
+    build: ./warp
+    cap_add: [NET_ADMIN]  # its own policy routing inside this container, even in proxy mode
+    volumes:
+      - warp:/var/lib/cloudflare-warp  # the registration, made once (accepts Cloudflare's app terms)
+    networks: [outside]
+    restart: unless-stopped
+    logging: *logging
+
+  panel:  # decisions on the review queue: http://127.0.0.1:8080
+    image: inz-app  # built by lists
+    pull_policy: never
+    command: ["python", "panel.py"]
+    env_file:  # GUS_KEY, CEIDG_TOKEN: the registry check on a card asks GUS REGON and CEIDG
+      - path: .env
+        required: false
+    environment:
+      PANEL_HOST: 0.0.0.0  # inside the container; the port below is published on this computer only
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./lists:/lists
+      - verdicts:/verdicts
+      - data:/data:ro  # which source lists block a searched domain, what CERT has already
+    depends_on: [blocky]
+    restart: unless-stopped
+    logging: *logging
+
+  prometheus:  # metrics of Blocky, the collector and the panel; kept 15 days
+    image: prom/prometheus:v3.5.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - metrics:/prometheus
+    networks: [default, outside]  # scrapes the collectors there; it serves only reads, no admin API
+    restart: unless-stopped
+    logging: *logging
+
+  grafana:  # dashboard: http://127.0.0.1:3000, open to view without login; admin/admin changes it
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_ANALYTICS_REPORTING_ENABLED: "false"  # no usage reports or update checks to grafana.com
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/antyscam.json
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - ./monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/antyscam.yml:ro
+      - ./monitoring/grafana/antyscam.json:/etc/grafana/dashboards/antyscam.json:ro
+    depends_on: [prometheus]
+    restart: unless-stopped
+    logging: *logging
+
+networks:
+  outside: {}  # the collectors and WARP only; the host lets 172.16.0.0/12 reach the relay at 172.17.0.1:8765
+
+volumes:
+  kampanie:  # features of analysed materials (baza.json)
+  data:  # SQLite base and package files; a named volume is much faster than a Windows bind mount
+  verdicts:  # verdicts.db of the collector and the panel: SQLite's locks fail on the Windows bind mount
+  metrics:  # Prometheus time series
+  warp:  # WARP's registration
+  models:  # Hugging Face cache with OPI-PIB/pl-ModernBERT-512-base (574 MB, Apache-2.0)

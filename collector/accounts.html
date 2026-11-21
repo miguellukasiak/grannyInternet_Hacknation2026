@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Konta audytorów</title>
+<style>
+  :root { --paper: #efece4; --paper-2: #e6e2d8; --ink: #151412; --ink-2: #5d584f; --rule: #cdc7ba; --red: #d3361b;
+    --green: #2f6b45; color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #141311; --paper-2: #1b1a17; --ink: #ece7dc; --ink-2: #9a948a; --rule: #34312c; --red: #ff5b3d;
+      --green: #74c08e; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 400 15px/1.45 system-ui, sans-serif; padding: 32px 16px; }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+  h1 i { width: 10px; height: 10px; background: var(--red); display: inline-block; }
+  h2 { font-size: 15px; margin: 32px 0 8px; color: var(--ink-2); font-weight: 600; }
+  a { color: inherit; }
+  .lead, .meta, .none { color: var(--ink-2); margin: 0 0 12px; }
+  .warn { color: var(--red); }
+  article { border: 1px solid var(--rule); background: var(--paper-2); padding: 16px; margin: 0 0 12px; display: grid; gap: 10px; }
+  article b { word-break: break-all; }
+  .note { white-space: pre-wrap; margin: 0; padding-left: 10px; border-left: 3px solid var(--rule); }
+  .act { display: flex; gap: 8px; flex-wrap: wrap; }
+  .act label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  textarea { font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--rule); padding: 9px 10px;
+    width: 100%; min-height: 200px; resize: vertical; }
+  :focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+  button { font: inherit; font-weight: 600; padding: 9px 14px; border: 1px solid var(--ink); background: var(--ink);
+    color: var(--paper); cursor: pointer; justify-self: start; }
+  button.quiet { background: none; color: var(--ink); font-weight: 400; }
+  .row { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--rule); }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--paper);
+    padding: 10px 16px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <h1><i></i>Konta audytorów</h1>
+  <p class="lead"><a href="/">← panel decyzji</a></p>
+  <p class="meta" id="mail"></p>
+  <h2>Czekają na decyzję</h2>
+  <div id="waiting"></div>
+  <h2>Zatwierdzone</h2>
+  <div id="approved"></div>
+</main>
+<div id="toast" role="status"></div>
+<script>
+const toast = document.getElementById("toast");
+function say(text) { toast.textContent = text; toast.classList.add("on"); setTimeout(() => toast.classList.remove("on"), 4000); }
+const when = iso => new Date(iso).toLocaleString("pl-PL", { dateStyle: "medium", timeStyle: "short" });
+
+async function act(login, action, message) {
+  const res = await fetch("/api/account", { method: "POST", headers: { "Content-Type": "application/json", "X-Panel": "1" },
+                                            body: JSON.stringify({ login, action, message }) }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (!res || !res.ok) return say(data.error || "Nie udało się, spróbuj ponownie.");
+  say((action === "approve" ? "Zatwierdzone" : "Usunięte") + (message.trim() ? (data.mailed ? ", mail wysłany." : ", ale mail NIE poszedł.") : "."));
+  load();
+}
+
+async function load() {
+  const data = await fetch("/api/accounts").then(r => r.json());
+  document.getElementById("mail").innerHTML = data.mail ? "Wiadomość poniżej pójdzie mailem do zgłaszającego. Możesz ją zmienić przed wysłaniem."
+    : '<span class="warn">Maile wyłączone (brak RESEND_KEY w .env): decyzja zapisze się, ale nikt nie dostanie wiadomości.</span>';
+  const waiting = document.getElementById("waiting"), approved = document.getElementById("approved");
+  waiting.replaceChildren(); approved.replaceChildren();
+  for (const a of data.accounts) {
+    if (a.approved) {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.innerHTML = '<span><b></b> <span class="meta"></span></span><button class="quiet" type="button">Usuń</button>';
+      row.querySelector("b").textContent = a.login;
+      row.querySelector(".meta").textContent = `od ${when(a.approved)} · ocenione domeny: ${a.decisions ?? 0} · ${a.points ?? 0} pkt`;
+      row.querySelector("button").onclick = () => confirm(`Usunąć konto ${a.login}? Sesja skończy się od razu, bez maila.`) && act(a.login, "reject", "");
+      approved.append(row);
+      continue;
+    }
+    const card = document.createElement("article");
+    card.innerHTML = `<div><b></b><div class="meta"></div></div><p class="note"></p>
+      <div class="act" role="radiogroup" aria-label="Decyzja">
+        <label><input type="radio" value="approve" checked> Zatwierdź</label>
+        <label><input type="radio" value="reject"> Odrzuć (konto znika)</label>
+      </div>
+      <textarea maxlength="5000" aria-label="Wiadomość do zgłaszającego"></textarea>
+      <button type="button">Zatwierdź i wyślij</button>`;
+    card.querySelector("b").textContent = a.login;
+    card.querySelector(".meta").textContent = "zgłoszony " + when(a.asked);
+    card.querySelector(".note").textContent = a.note || "(bez opisu)";
+    const text = card.querySelector("textarea"), button = card.querySelector("button");
+    const name = "d-" + a.login;
+    let action = "approve";
+    text.value = data.templates.approve;
+    for (const radio of card.querySelectorAll("input")) {
+      radio.name = name;
+      radio.onchange = () => {
+        action = radio.value;
+        text.value = data.templates[action];  // the other answer's starting point; edit before sending
+        button.textContent = action === "approve" ? "Zatwierdź i wyślij" : "Odrzuć i wyślij";
+      };
+    }
+    button.onclick = () => act(a.login, action, text.value);
+    waiting.append(card);
+  }
+  if (!waiting.children.length) waiting.innerHTML = '<p class="none">Nikt nie czeka.</p>';
+  if (!approved.children.length) approved.innerHTML = '<p class="none">Jeszcze nikt.</p>';
+}
+load();
+</script>
+</body>
+</html>

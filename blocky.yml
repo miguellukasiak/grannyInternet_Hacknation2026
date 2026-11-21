@@ -1,0 +1,63 @@
+upstreams:
+  groups:
+    default:  # both resolvers also filter malware on their side
+      - https://dns.quad9.net/dns-query
+      - https://security.cloudflare-dns.com/dns-query
+
+bootstrapDns:
+  - tcp+udp:9.9.9.9
+  - tcp+udp:1.1.1.2
+
+blocking:
+  # Packages are built by the lists service from sources.toml. Each comes in two parts: the -top part
+  # holds entries that hit one of the safe_top most popular sites, so only modes that list it block those.
+  denylists:
+    scam: [/data/pkg-scam.txt, /lists/fb.txt]  # collector output also read directly: blocks within seconds
+    scam-top: [/data/pkg-scam-top.txt]
+    watpliwe: [/data/pkg-watpliwe.txt]  # doubtful offers; in every mode, users pick safety over seeing every ad
+    watpliwe-top: [/data/pkg-watpliwe-top.txt]
+    reklamy: [/data/pkg-reklamy.txt]
+    reklamy-top: [/data/pkg-reklamy-top.txt]
+    smart-tv: [/data/pkg-smart-tv.txt]
+    smart-tv-top: [/data/pkg-smart-tv-top.txt]
+    windows: [/data/pkg-windows.txt]
+    windows-top: [/data/pkg-windows-top.txt]
+    dorosli: [/data/pkg-dorosli.txt]
+    dorosli-top: [/data/pkg-dorosli-top.txt]
+    hazard: [/data/pkg-hazard.txt]
+    hazard-top: [/data/pkg-hazard-top.txt]
+    bez-google: [/data/pkg-bez-google.txt]
+    bez-google-top: [/data/pkg-bez-google-top.txt]
+    bez-facebooka: [/data/pkg-bez-facebooka.txt]
+    bez-facebooka-top: [/data/pkg-bez-facebooka-top.txt]
+  allowlists:
+    wyjatki: [/lists/allow.txt]  # false-positive appeals; an allowlist wins over every group of the client
+  # Modes = sets of groups. Docker Desktop shows every device as one client, so locally "default" decides.
+  # On a server a device picks its mode by name: DoH .../dns-query/ultra-phone or DoT id-ultra-phone.<host>.
+  # Every mode needs at least one denylist group, otherwise Blocky allows only the allowlist.
+  # Only reklamy-top is held back outside ultra: for scam, content and telemetry packages a popular site is
+  # the actual target (phishing on weebly.com, pornhub.com, telemetry under microsoft.com), so they use both parts.
+  clientGroupsBlock:
+    "ochrona*": &ochrona [scam, scam-top, watpliwe, watpliwe-top, wyjatki]
+    "standard*": &standard [scam, scam-top, watpliwe, watpliwe-top, reklamy, wyjatki]
+    "rodzinny*": &rodzinny [scam, scam-top, watpliwe, watpliwe-top, reklamy, dorosli, dorosli-top, hazard, hazard-top,
+                            wyjatki]
+    "prywatny*": &prywatny [scam, scam-top, watpliwe, watpliwe-top, reklamy, smart-tv, smart-tv-top, windows,
+                            windows-top, wyjatki]
+    "ultra*": &ultra [scam, scam-top, watpliwe, watpliwe-top, reklamy, reklamy-top, smart-tv, smart-tv-top, windows,
+                      windows-top, dorosli, dorosli-top, hazard, hazard-top, bez-google, bez-google-top, bez-facebooka,
+                      bez-facebooka-top, wyjatki]
+    default: *ochrona  # global mode: *ochrona, *standard, *rodzinny, *prywatny or *ultra; then restart blocky
+  blockType: nxDomain
+  loading:
+    refreshPeriod: 1h  # fallback only: the lists service triggers a refresh whenever a package changes
+
+ports:
+  dns: 53
+  http: 4000
+
+queryLog:
+  type: none  # DNS history is personal data (GDPR): don't keep it
+
+prometheus:
+  enable: true
