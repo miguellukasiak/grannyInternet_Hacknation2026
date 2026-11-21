@@ -612,8 +612,9 @@ class Base:
         n = len(self.materials)
         if n < 2:
             return [[m.id for m in self.materials]] if n else []
+        # sklearn merges only below the threshold; the rule is "at least `level`", as in place()
         labels = AgglomerativeClustering(n_clusters=None, metric="precomputed", linkage=linkage,
-                                         distance_threshold=1 - level).fit_predict(1 - self.matrix())
+                                         distance_threshold=1 - level + 1e-9).fit_predict(1 - self.matrix())
         out: dict[int, list[str]] = {}
         for m, label in zip(self.materials, labels):
             out.setdefault(int(label), []).append(m.id)

@@ -101,5 +101,41 @@ class Campaigns(unittest.TestCase):
             k.fetch(k.Material(id="p", name="p"), "http://127.0.0.1:8501/")
 
 
+class Upload(unittest.TestCase):
+    """The GUI's upload path: multipart on disk, ZIPs, and how files become materials."""
+
+    def test_multipart_zip_and_grouping(self):
+        import io
+        import zipfile
+
+        import app
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                z.writestr("zestaw/inc1/shot.txt", "a")
+                z.writestr("zestaw/inc2/page.html", "<html></html>")
+                z.writestr("../../etc/evil.txt", "x")  # a path that tries to climb out stays inside
+                z.writestr("zestaw\\inc1\\", "")  # a folder entry the Windows way: not a file
+            parts = [("url", None, b""), ("pliki", "zestaw.zip", buf.getvalue()),
+                     ("pliki", "luzny/ad.txt", "żółć\r\n--x".encode())]
+            body = b"".join(b'--XB\r\nContent-Disposition: form-data; name="%s"%s\r\n\r\n%s\r\n'
+                            % (n.encode(), f'; filename="{f}"'.encode() if f else b"", v) for n, f, v in parts) + b"--XB--\r\n"
+            (d / "body").write_bytes(body)
+            (spool := d / "spool").mkdir()
+            form, files = app.parse_multipart(d / "body", "multipart/form-data; boundary=XB", spool)
+            self.assertEqual(form, {"url": ""})
+            self.assertEqual(files[1][1].read_bytes(), "żółć\r\n--x".encode())  # boundary-like bytes inside survive
+            entries = app.expand(files, spool)
+            names = sorted(r for r, _ in entries)
+            self.assertEqual(names, ["luzny/ad.txt", "zestaw/etc/evil.txt", "zestaw/zestaw/inc1/shot.txt",
+                                     "zestaw/zestaw/inc2/page.html"])
+            self.assertEqual([n for n, _ in app.group(entries, False)], ["luzny", "zestaw"])
+            inc = [(r, p) for r, p in entries if "inc" in r]
+            self.assertEqual([n for n, _ in app.group(inc, False)], ["inc1", "inc2"])  # wrappers stripped
+            self.assertEqual(len(app.group(inc, True)), 1)  # a URL or text makes it one material
+            self.assertEqual(app.new_id("a b", {"a-b"}), "a-b-2")
+
+
 if __name__ == "__main__":
     unittest.main()

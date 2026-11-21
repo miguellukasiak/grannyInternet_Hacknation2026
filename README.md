@@ -15,20 +15,27 @@ Potrzebny jest tylko Docker.
 ```powershell
 git clone https://github.com/miguellukasiak/grannyInternet_Hacknation2026
 cd grannyInternet_Hacknation2026
-mkdir dane            # tu wrzuć materiały (folder na materiał albo luźne pliki)
 docker compose up --build kampanie
 ```
 
-Potem otwórz http://127.0.0.1:8501.
+Potem otwórz http://127.0.0.1:8501 i wgraj materiały w przeglądarce: pliki, cały folder albo ZIP (do 2 GB),
+adres strony albo sam tekst reklamy.
 
-- Tryb offline: ustaw `ONLINE=0` (PowerShell: `$env:ONLINE=0`, bash: `ONLINE=0 docker compose up --build kampanie`). Wtedy nic nie wychodzi z kontenera. Bez tej zmiennej moduł pyta RDAP o wiek domen docelowych i, gdy wkleisz adres w GUI, pobiera stronę (z blokadą adresów prywatnych, SSRF).
-- Folder `dane/` jest montowany tylko do odczytu. Analizy trafiają do wolumenu `kampanie` (`/data/baza.json`).
-- Bez GUI: `docker compose run --rm kampanie python kampanie.py /dane` wypisuje kampanie i werdykty jako tekst.
+- Tryb offline: ustaw `ONLINE=0` (PowerShell: `$env:ONLINE=0`, bash: `ONLINE=0 docker compose up --build kampanie`). Wtedy nic nie wychodzi z kontenera, a wklejony adres jest tylko zapisany. Bez tej zmiennej moduł pyta RDAP o wiek domen docelowych i pobiera wklejoną stronę (z blokadą adresów prywatnych, SSRF).
+- Wgrane materiały i ich cechy trafiają do wolumenu `kampanie` (`/data/baza.json`). Materiał usuwa się na jego stronie, całą bazę przyciskiem „Wyczyść bazę”.
+- Bez GUI: `docker compose run --rm -v "${PWD}/folder:/x:ro" kampanie python kampanie.py /x` wypisuje kampanie i werdykty jako tekst (każdy podfolder to jeden materiał).
 - Testy: `docker compose run --rm --no-deps kampanie python -m unittest -v`.
 
 ### Co przyjmuje
 
-Każdy podfolder w `dane/` to jeden materiał (incydent), a każdy luźny plik to osobny materiał. Rozpoznawane są:
+Jedno wgranie zamienia się w materiały tak:
+
+- pliki jednego incydentu (zrzuty, zapisana strona, HAR) dają **jeden materiał**;
+- folder albo ZIP, w którym wszystkie pliki leżą w podfolderach, daje **materiał na podfolder** (zestaw incydentów);
+- foldery-opakowania, w których jest tylko jeden podfolder, są pomijane, a ostatni z nich daje nazwę;
+- adres strony albo tekst reklamy razem z plikami daje zawsze jeden materiał.
+
+Zestaw wielu incydentów jest analizowany w tle, a strona sama się odświeża. Rozpoznawane są:
 
 | Plik | Co z niego bierzemy |
 |---|---|
@@ -39,7 +46,7 @@ Każdy podfolder w `dane/` to jeden materiał (incydent), a każdy luźny plik t
 | `.mp4`, `.webm` i inne wideo | odnotowane jako materiał; treść tylko z metadanych |
 | `.txt` | tekst reklamy, adresy w treści |
 
-W GUI można też dodać nowy materiał: wkleić tekst reklamy, adres strony albo pliki. Wynik pokazuje od razu
+Pojedynczy materiał od razu pokazuje
 werdykt, przypisanie do istniejącej kampanii (z dowodem najsilniejszego powiązania) albo informację
 „nowy wzorzec”.
 
@@ -118,8 +125,8 @@ która zniknęła, nadal łączy się z kampanią przez tekst, adres i obraz.
 
 ### 6. Interfejs
 
-- `/`: kampanie z rodzinami, domenami, duplikatami i najmocniejszymi parami wraz z przesłankami, a obok formularz nowego materiału.
-- `/m/<id>`: werdykt z punktami, cechy, brakujące dane oraz kampania i najbliższe materiały.
+- `/`: wgrywanie materiałów (pliki, folder, ZIP, adres, tekst), kampanie z rodzinami, domenami, duplikatami i najmocniejszymi parami wraz z przesłankami oraz tabela materiałów z werdyktami.
+- `/m/<id>`: werdykt z punktami, cechy, brakujące dane oraz kampania i najbliższe materiały; tu materiał usuwa się z bazy.
 - `/graf`: graf powiązań (SVG), kampanie jako pierścienie.
 - `/eksport.json`: kampanie, pary i przesłanki do dalszej obróbki.
 
@@ -197,4 +204,4 @@ Listy blokad są pobierane w czasie działania i nie są rozpowszechniane w repo
 `sources.toml` adres i licencję. Część z nich jest niekomercyjna (np. someonewhocares, MVPS) albo ma licencję
 nieznaną. Przed użyciem komercyjnym takie listy trzeba wyłączyć.
 
-Dane organizatora nie są częścią repozytorium. Wrzuca się je lokalnie do `dane/`, który jest w `.gitignore`.
+Dane organizatora nie są częścią repozytorium. Wgrywa się je w przeglądarce i zostają w lokalnym wolumenie Dockera.

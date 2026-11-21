@@ -5,14 +5,13 @@ x-logging: &logging
 
 services:
   kampanie:  # the campaign demonstrator alone: `docker compose up --build kampanie`, then http://127.0.0.1:8501
-    build: ./kampanie
+    build: {context: ., dockerfile: kampanie/Dockerfile}  # the root, for the site fonts (.dockerignore lets in only these)
     image: kampanie
     environment:
-      ONLINE: ${ONLINE-1}  # 0 = no RDAP lookups, nothing leaves the container except URLs typed in the GUI
+      ONLINE: ${ONLINE-1}  # 0 = no RDAP lookups and no page fetches: nothing leaves the container
     ports: ["127.0.0.1:8501:8501"]
     volumes:
-      - ./dane:/dane:ro  # materials to group, one folder per incident (not in the repo)
-      - kampanie:/data  # extracted features and materials added in the GUI
+      - kampanie:/data  # materials uploaded in the GUI and their extracted features
     restart: unless-stopped
     logging: *logging
 

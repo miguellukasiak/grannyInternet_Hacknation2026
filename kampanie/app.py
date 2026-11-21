@@ -1,231 +1,435 @@
-"""GUI of kampanie: http://127.0.0.1:8501. Reads the materials in /dane at start, keeps features in /data/baza.json,
-analyses a new URL, ad text, screenshot or saved page against them."""
+"""GUI of kampanie: http://127.0.0.1:8501. The user uploads materials in the browser (files, a folder, a ZIP, a URL or
+an ad text); their features are kept in /data/baza.json and every new one is compared with all the others."""
 import email.parser
 import email.policy
 import html
 import json
 import math
+import mmap
 import os
 import re
+import shutil
 import tempfile
+import textwrap
 import threading
-import zlib
+import zipfile
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import kampanie as k
 
-DANE = Path(os.environ.get("DANE", "/dane"))
 BAZA = Path(os.environ.get("BAZA", "/data/baza.json"))
 ONLINE = os.environ.get("ONLINE", "1") == "1"  # RDAP ages of landing domains; 0 = nothing leaves the container
-MAX_UPLOAD = 60_000_000
-lock = threading.Lock()
-state = {"base": k.Base([]), "campaigns": [], "status": "start", "log": []}
-
-
-def signature(root: Path) -> str:
-    if not root.is_dir():
-        return ""
-    files = sorted(f"{p.relative_to(root)}:{p.stat().st_size}:{int(p.stat().st_mtime)}"
-                   for p in root.rglob("*") if p.is_file())
-    return f"{zlib.crc32(chr(10).join(files).encode()):08x}"
+STATIC = Path(__file__).with_name("static")
+MAX_UPLOAD = 2_000_000_000  # a whole incident set with its videos; the body goes to disk, never to memory
+MAX_UNZIP, MAX_FILES = 3_000_000_000, 20_000  # a ZIP bomb stops here
+work = threading.Lock()  # one writer at a time: uploads and deletes
+state = {"base": k.Base([]), "campaigns": [], "status": "", "error": ""}
 
 
 def save(materials):
     BAZA.parent.mkdir(parents=True, exist_ok=True)
     tmp = BAZA.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"sig": signature(DANE), "materials": [asdict(m) for m in materials]},
-                              ensure_ascii=False), encoding="utf-8")
+    tmp.write_text(json.dumps({"materials": [asdict(m) for m in materials]}, ensure_ascii=False), encoding="utf-8")
     tmp.replace(BAZA)  # never a half-written base
 
 
-def rebuild(materials):
+def commit(materials):
+    """Group again and keep: called with `work` held."""
     base = k.Base(materials)
-    campaigns = base.campaigns()
-    with lock:
-        state.update(base=base, campaigns=campaigns, status="gotowe")
+    state.update(base=base, campaigns=base.campaigns())
+    save(materials)
 
 
-def load(force=False):
-    def log(line):
-        state["log"] = (state["log"] + [line])[-30:]
-        state["status"] = line
+def load():
+    if BAZA.exists():
+        materials = [k.Material(**m) for m in json.loads(BAZA.read_text(encoding="utf-8"))["materials"]]
+        base = k.Base(materials)
+        state.update(base=base, campaigns=base.campaigns())
+
+
+# ---------- uploads ----------
+
+def parse_multipart(body: Path, ctype: str, spool: Path) -> tuple[dict, list[tuple[str, Path]]]:
+    """Fields and files of a multipart body kept on disk; file names keep the folder path the browser sent."""
+    found = re.search(r'boundary="?([^";]+)"?', ctype)
+    if not found or body.stat().st_size == 0:
+        return {}, []
+    sep = b"--" + found[1].encode()
+    form, files = {}, []
+    with open(body, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        pos = mm.find(sep)
+        while pos != -1 and mm[pos + len(sep):pos + len(sep) + 2] != b"--":
+            start = pos + len(sep) + 2
+            end = mm.find(b"\r\n" + sep, start)
+            head_end = mm.find(b"\r\n\r\n", start, end)
+            if end == -1 or head_end == -1:
+                break
+            head = email.parser.HeaderParser(policy=email.policy.HTTP).parsestr(mm[start:head_end].decode("utf-8", "replace"))
+            name = head.get_param("name", header="content-disposition")
+            fname = head.get_param("filename", header="content-disposition")
+            if fname is not None:
+                if end > head_end + 4:
+                    with open(p := spool / f"{len(files):05d}", "wb") as out:
+                        for i in range(head_end + 4, end, 1 << 22):
+                            out.write(mm[i:min(i + (1 << 22), end)])
+                    files.append((str(fname), p))
+            elif name:
+                form[str(name)] = mm[head_end + 4:end].decode("utf-8", "replace")
+            pos = end + 2
+    return form, files
+
+
+def clean(path: str) -> str:
+    """A safe relative path: no root, no .., no odd characters."""
+    parts = [re.sub(r"[^\w.\- ]", "_", p) for p in path.replace("\\", "/").split("/")]
+    # long names lose their middle, not their end: "X.html" and its folder "X_files" stay apart
+    return "/".join(p if len(p) <= 120 else p[:60] + "~" + p[-59:] for p in parts if p not in ("", ".", ".."))
+
+
+def expand(files: list[tuple[str, Path]], spool: Path) -> list[tuple[str, Path]]:
+    """Uploaded files with ZIPs unpacked; a ZIP's files sit in a folder named after it."""
+    out, total = [], 0
+    for fname, p in files:
+        rel = clean(fname)
+        if not rel:
+            continue
+        if rel.lower().endswith(".zip") and zipfile.is_zipfile(p):
+            with zipfile.ZipFile(p) as z:
+                for info in z.infolist():
+                    total += info.file_size
+                    if total > MAX_UNZIP or len(out) > MAX_FILES:
+                        raise ValueError("archiwum jest za duże")
+                    if info.filename.endswith(("/", "\\")) or not (inner := clean(info.filename)):  # Windows tools write folders with "\\"
+                        continue
+                    with z.open(info) as src, open(q := spool / f"z{len(out):05d}", "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    out.append((f"{rel[:-4]}/{inner}", q))
+            p.unlink()
+        else:
+            out.append((rel, p))
+    return out
+
+
+def group(entries: list[tuple[str, Path]], one: bool) -> list[tuple[str, list[tuple[str, Path]]]]:
+    """Folders shared by every file are only wrappers; then every subfolder is a material if all files sit in
+    subfolders (a set of incidents), else everything is one material (the files of one incident)."""
+    name = ""
+    while entries and all("/" in r for r, _ in entries) and len({r.split("/", 1)[0] for r, _ in entries}) == 1:
+        name = entries[0][0].split("/", 1)[0]
+        entries = [(r.split("/", 1)[1], p) for r, p in entries]
+    if one or not entries or not all("/" in r for r, _ in entries):
+        return [(name, entries)]
+    groups: dict[str, list] = {}
+    for r, p in entries:
+        top, rest = r.split("/", 1)
+        groups.setdefault(top, []).append((rest, p))
+    return sorted(groups.items(), key=lambda g: (len(g[0]), g[0]))
+
+
+def new_id(name: str, taken: set) -> str:
+    base = re.sub(r"[^\w.\-]+", "-", name).strip("-.")
+    base = (base if len(base) <= 32 else base[:32].rsplit("-", 1)[0]).strip("-.") or "material"  # whole words
+    out, n = base, 1
+    while out in taken:
+        n += 1
+        out = f"{base}-{n}"
+    taken.add(out)
+    return out
+
+
+def analyse_one(m: k.Material, files: list[tuple[str, Path]], root: Path, form: dict) -> k.Material:
+    paths = []
+    for rel, p in files:
+        (target := root / rel).parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            target = target.with_name(f"{len(paths)}-{target.name}")
+        p.rename(target)
+        paths.append(target)
+    if url := form.get("url", "").strip():
+        url = url if "://" in url else "https://" + url
+        try:
+            if not ONLINE:
+                raise ConnectionRefusedError("tryb offline, strony nie pobieramy")
+            k.fetch(m, url)
+        except Exception as err:  # the page is gone or refuses: its address still says something
+            m.missing.append(f"strona {url}: niedostępna ({err.__class__.__name__}: {str(err)[:120]})")
+            k.add_url(m, url, landing=True)
+    if text := form.get("tekst", "").strip():
+        k.add_text(m, text)
+        for dom in k.DOMAIN_TEXT.findall(text.lower()):  # an address in the ad's caption is where it leads
+            k.add_url(m, "https://" + dom, landing=True)
+        m.sources.append("tekst z formularza")
+    k.from_files(m, paths, root)
+    if ONLINE:
+        k.look_up_ages(m)
+    return m
+
+
+def ingest(form: dict, entries: list[tuple[str, Path]], work_dir: Path, keep: bool) -> list[k.Material]:
+    """Analyse every group into a material; with `keep` each one joins the base as soon as it is read."""
+    one = bool(form.get("url", "").strip() or form.get("tekst", "").strip())
+    groups = group(entries, one)
+    taken = set(state["base"].by_id)
+    out, failed = [], []
+    for i, (name, files) in enumerate(groups):
+        label = name or (urlsplit(form["url"].strip()).netloc if form.get("url", "").strip() else "") \
+            or (Path(files[0][0]).stem if files else "") \
+            or textwrap.shorten(form.get("tekst", ""), 44, placeholder=" …") or "materiał"
+        state["status"] = f"Analiza {i + 1} z {len(groups)}: {label}"
+        try:
+            m = analyse_one(k.Material(id=new_id(label, taken), name=label, origin="dodane"),
+                            files, work_dir / f"g{i}", form)
+        except Exception as err:  # one unreadable incident does not stop the rest of a set
+            if len(groups) == 1:
+                raise
+            failed.append(f"{label} ({err.__class__.__name__}: {str(err)[:80]})")
+            continue
+        out.append(m)
+        if keep:
+            commit(state["base"].materials + [m])
+    state["error"] = ("Nie udało się odczytać: " + "; ".join(failed)) if failed else ""
+    return out
+
+
+def run_batch(form, entries, work_dir):
     try:
-        old = json.loads(BAZA.read_text(encoding="utf-8")) if BAZA.exists() else {"sig": None, "materials": []}
-        kept = [k.Material(**m) for m in old["materials"]]
-        added = [m for m in kept if m.origin == "dodane"]
-        if force or old["sig"] != signature(DANE):
-            fresh = k.load_folder(DANE, log) if DANE.is_dir() else []
-            if ONLINE:
-                for m in fresh:
-                    log(f"RDAP: {m.id}")
-                    k.look_up_ages(m)
-            kept = fresh + added
-            save(kept)
-        log("grupowanie")
-        rebuild(kept)
-    except Exception as e:
-        state["status"] = f"błąd: {e.__class__.__name__}: {e}"
-        raise
+        with work:
+            ingest(form, entries, work_dir, keep=True)
+    except Exception as err:
+        state["error"] = f"Nie udało się przeanalizować: {err.__class__.__name__}: {err}"
+    finally:
+        state["status"] = ""
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 # ---------- HTML ----------
 
 e = html.escape
-CSS = """
-:root{--bg:#fbfaf7;--fg:#1d1d1b;--mut:#6b6a64;--line:#dedbd2;--card:#fff;--hi:#b3261e;--mid:#b06000;--ok:#2e7d32;--acc:#1f4e9c}
-@media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ecebe6;--mut:#a3a29b;--line:#3a3934;--card:#1f1f1c;--hi:#ff8a80;--mid:#ffb74d;--ok:#81c784;--acc:#90b4ff}}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
-main{max-width:1100px;margin:0 auto;padding:16px}
-a{color:var(--acc)} h1{font-size:22px;margin:8px 0} h2{font-size:18px;margin:24px 0 8px} h3{font-size:16px;margin:0 0 4px}
-nav a{margin-right:16px} .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0}
-.mut{color:var(--mut);font-size:13px} .hi{color:var(--hi)} .mid{color:var(--mid)} .ok{color:var(--ok)}
-table{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top;font-size:14px}
-.tag{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:0 8px;margin:2px;font-size:13px}
-input[type=text],textarea{width:100%;box-sizing:border-box;padding:6px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px}
-button{padding:8px 16px;border-radius:6px;border:1px solid var(--acc);background:var(--acc);color:#fff;cursor:pointer}
-ul{margin:4px 0;padding-left:20px} .wrap{overflow-x:auto} pre{white-space:pre-wrap;font-size:13px;max-height:240px;overflow:auto}
-"""
 
 
-def page(title: str, body: str) -> bytes:
+def many_of(n: int) -> str:
+    """Polish plural: 1 materiał, 2 materiały, 5 materiałów, 22 materiały."""
+    return f"{n} " + ("materiał" if n == 1 else "materiały" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "materiałów")
+
+
+def num(x: float) -> str:
+    return f"{x:.2f}".replace(".", ",")
+
+
+def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
+    def nav(href, text, key):
+        return f'<a href="{href}"{" aria-current=page" if key == here else ""}>{text}</a>'
+    busy = (f'<div class="busy" role="status"><div class="wrap"><i></i>{e(state["status"])}. Strona odświeża się sama.'
+            f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)}</title><style>{CSS}</style></head>
-<body><main><nav><a href="/">Kampanie</a><a href="/graf">Graf powiązań</a><a href="/eksport.json">Eksport JSON</a></nav>
-{body}</main></body></html>""".encode()
+<meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=2">
+<link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
+<script src="/static/app.js?v=2" defer></script></head>
+<body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
+<header class="wrap top"><a class="mark" href="/"><i></i>grannyInternet <span>/ kampanie</span></a>
+<nav aria-label="Główna">{nav("/#kampanie", "Kampanie", "k")}{nav("/#materialy", "Materiały", "m")}{nav("/graf", "Graf powiązań", "g")}
+{nav("/eksport.json", "Eksport JSON", "x")}<a class="nav-cta" href="/#dodaj">Dodaj materiał</a></nav></header>
+<main id="tresc">{body}</main>
+<footer class="foot"><div class="wrap"><div class="foot-row"><a class="mark" href="/"><i></i>grannyInternet</a>
+<span>Wynik to wstępna ocena z przesłankami, nie wyrok. Decyzję podejmuje człowiek.</span></div>
+<p>Przesłanki: identyfikatory reklamowe, domeny i przekierowania, schemat parametrów linku, adres IP, obrazy (dHash),
+tekst i narracja, szablon HTML, osoby, marki, temat. Składają się jak niezależne poszlaki. Brak danych nie jest przesłanką
+przeciw. Metodyka: README repozytorium.</p></div></footer></body></html>""".encode()
 
 
-def mlink(mid: str) -> str:
-    return f'<a href="/m/{quote(mid)}">{e(mid)}</a>'
+def mlink(mid: str, cls="chip") -> str:
+    return f'<a class="{cls}" href="/m/{quote(mid)}">{e(mid)}</a>'
 
 
-def tags(items) -> str:
-    return "".join(f'<span class="tag">{e(str(x))}</span>' for x in items) or '<span class="mut">brak</span>'
+def chips(items, cls="chip") -> str:
+    items = [x for x in items if x]
+    return (f'<div class="chips">{"".join(f"<span class={chr(34)}{cls}{chr(34)}>{e(str(x))}</span>" for x in items)}</div>'
+            if items else '<span class="none">brak</span>')
 
 
-def risk(m) -> str:
-    text, points = k.verdict(m)
-    cls = "hi" if points >= 4 else "mid" if points >= 2 else "ok"
-    return f'<b class="{cls}">{e(text)}</b> <span class="mut">({points} pkt)</span>'
+def stamp(m, big=False) -> str:
+    _, points = k.verdict(m)
+    cls, text = ("hi", "Wysokie ryzyko") if points >= 4 else ("mid", "Podejrzane") if points >= 2 else ("ok", "Brak sygnałów")
+    return f'<span class="stamp {cls}{" stamp-big" if big else ""}">{text}</span><span class="pts">{points} pkt</span>'
 
 
-def evidence(ev) -> str:
-    return "<ul>" + "".join(f"<li>{e(why)} <span class='mut'>[{e(kind)}, siła {s:.2f}]</span></li>"
-                            for s, kind, why in ev) + "</ul>"
+def reasons(ev) -> str:
+    return '<ul class="why">' + "".join(
+        f"<li><small>{e(kind)}</small><span>{e(why)}<em>siła {num(s)}</em></span></li>" for s, kind, why in ev) + "</ul>"
 
 
-FORM = """<div class="card"><h2 style="margin-top:0">Analizuj nowy materiał</h2>
-<form method="post" action="/analizuj" enctype="multipart/form-data">
-<p><label>Adres URL reklamy lub strony<br><input type="text" name="url" placeholder="https://..."></label></p>
-<p><label>Tekst reklamy, nazwa produktu lub inna wskazówka<br><textarea name="tekst" rows="3"></textarea></label></p>
-<p><label>Pliki: zrzut ekranu, zapisana strona (.html, .mhtml), HAR, .info.json, .txt<br>
-<input type="file" name="pliki" multiple></label></p>
-<p><label><input type="checkbox" name="dodaj" value="1" checked> dodaj do bazy (kolejne materiały będą z nim porównywane)</label></p>
-<button>Analizuj</button></form></div>"""
+def pair(score, who: str, ev) -> str:
+    return (f'<li class="pair"><div><div class="pair-who">{who}</div><div class="score"><b>{num(score)}</b>'
+            f'<i style="--s:{score:.3f}"></i></div></div>{reasons(ev)}</li>')
+
+
+def campaign_of(campaigns) -> dict:
+    return {mid: c for c in campaigns for mid in c["members"]}
+
+
+FORM = """<section class="sec" id="dodaj" aria-labelledby="dodaj-t"><div class="wrap">
+<div class="sec-head"><h2 id="dodaj-t">Dodaj materiał</h2><p>Pliki jednego incydentu dają jeden materiał. Folder albo ZIP
+z podfolderami daje tyle materiałów, ile jest podfolderów. Czytamy zrzuty ekranu (OCR), zapisane strony (.html, .mhtml),
+HAR, metadane wideo (.info.json) i tekst. Wideo jest tylko odnotowane.</p></div>
+<form class="add" method="post" action="/analizuj" enctype="multipart/form-data">
+<div class="drop" data-drop><input type="file" name="pliki" multiple aria-label="Pliki materiału">
+<b>Upuść tu pliki, folder albo ZIP</b><span class="files" data-files>albo kliknij, żeby wybrać pliki</span>
+<div class="pick"><label class="btn btn-line btn-sm">Wybierz folder<input type="file" name="pliki" webkitdirectory multiple
+aria-label="Folder z materiałami"></label></div></div>
+<div class="fields">
+<label class="field"><span>Adres reklamy lub strony</span><input type="text" name="url" placeholder="https://" inputmode="url" autocomplete="off"></label>
+<label class="field"><span>Tekst reklamy albo inna wskazówka</span><textarea name="tekst" placeholder="Np. podpis reklamy, nazwa produktu, adres z paska"></textarea></label>
+<label class="check"><input type="checkbox" name="dodaj" value="1" checked>Zapisz w bazie. Kolejne materiały będą z nim porównywane.</label>
+<button class="btn btn-ink">Analizuj materiał <span aria-hidden="true">→</span></button>
+<p class="hint">{online}</p></div></form></div></section>"""
 
 
 def index() -> bytes:
     base, campaigns = state["base"], state["campaigns"]
-    busy = "" if state["status"] == "gotowe" else f'<div class="card mid">Trwa: {e(state["status"])} (odśwież)</div>'
-    rows = []
-    for c in campaigns:
+    ms = base.materials
+    many = [c for c in campaigns if len(c["members"]) > 1]
+    where = campaign_of(campaigns)
+    high = sum(1 for m in ms if k.verdict(m)[1] >= 4)
+    lone = len(ms) - sum(len(c["members"]) for c in many)
+    error = f'<div class="notice" role="alert">{e(state["error"])}</div>' if state["error"] else ""
+    hero = f"""<section class="wrap hero"><p class="eyebrow">Kolekcjoner fejków · demonstrator</p>
+<h1>Od pojedynczej reklamy <span>do kampanii.</span></h1>
+<p class="lead">Wgraj zrzut reklamy, zapisaną stronę, HAR albo cały folder incydentów. Każdy materiał od razu dostaje
+wstępny werdykt, a potem trafia do kampanii albo zostaje nowym wzorcem. Przy każdym powiązaniu widać, na jakiej podstawie.</p>
+{error}<dl class="stats"><div><dt>Materiały</dt><dd>{len(ms)}</dd></div><div><dt>Kampanie</dt><dd>{len(many)}</dd></div>
+<div class="hot"><dt>Wysokie ryzyko</dt><dd>{high}</dd></div><div><dt>Nowe wzorce</dt><dd>{lone}</dd></div></dl></section>"""
+    form = FORM.format(online="Adresy stron i wiek domen (RDAP) sprawdzamy w sieci. Pliki nie opuszczają kontenera."
+                       if ONLINE else "Tryb offline: nic nie opuszcza kontenera, adres strony jest tylko zapisany.")
+    cards = []
+    for c in many:
         dups = ", ".join(f"{a} = {b}" for a, b in c["duplicates"])
-        best = "".join(f"<li>{mlink(a)} ~ {mlink(b)}: <b>{s:.2f}</b> {e('; '.join(w for _, _, w in ev[:3]))}</li>"
-                       for s, a, b, ev in c["pairs"][:4])
-        rows.append(f"""<div class="card"><h3>{e(c['id'])}: {e(c['label'])}
-<span class="mut">({len(c['members'])} mat., rodzina {e(c['family'])})</span></h3>
-<div>Materiały: {', '.join(mlink(x) for x in c['members'])}</div>
-<div>Łączy je: {tags(c['linked_by'])}</div><div>Domeny stron: {tags(c['domains'])}</div>
-{f'<div>Duplikaty: {e(dups)}</div>' if dups else ''}{f'<ul>{best}</ul>' if best else ''}</div>""")
-    table = "".join(f"<tr><td>{mlink(m.id)}</td><td>{risk(m)}</td><td>{tags(m.landing[:3])}</td>"
-                    f"<td>{tags(m.persons + m.claimed)}</td><td>{tags(m.topics)}</td>"
-                    f"<td class='mut'>{len(m.missing)}</td></tr>" for m in base.materials)
-    return page("Kampanie", f"""<h1>Od pojedynczych reklam do kampanii</h1>{busy}{FORM}
-<h2>Kampanie ({len(campaigns)}) z {len(base.materials)} materiałów</h2>
-<p class="mut">Kampania: każdy materiał ma w niej co najmniej jedno powiązanie ≥ {k.LINK}; rodzina kampanii: średnie podobieństwo ≥ {k.FAMILY}.</p>{''.join(rows)}
-<h2>Materiały i wstępny werdykt</h2><div class="wrap"><table><tr><th>Materiał</th><th>Werdykt</th><th>Domena strony</th>
-<th>Osoby / marki</th><th>Temat</th><th>Braki</th></tr>{table}</table></div>
-<form method="post" action="/przelicz"><p><button>Przeanalizuj zbiór od nowa</button></p></form>""")
+        pairs = "".join(pair(s, f"{mlink(a, '')} ~ {mlink(b, '')}", ev[:3]) for s, a, b, ev in c["pairs"][:4])
+        cards.append(f"""<article class="camp" id="{e(c['id'])}"><div class="camp-side"><span class="camp-id">{e(c['id'])}</span>
+<h3>{e(c['label'])}</h3><p>{many_of(len(c['members']))} · rodzina {e(c['family'])}</p></div>
+<div class="camp-main"><dl class="facts"><div><dt>Materiały</dt><dd><div class="chips">{''.join(mlink(x) for x in c['members'])}</div></dd></div>
+<div><dt>Łączy je</dt><dd>{chips(c['linked_by'], 'chip sig')}</dd></div>
+<div class="wide"><dt>Domeny stron</dt><dd>{chips(c['domains'])}</dd></div>
+{f'<div class="wide"><dt>Duplikaty</dt><dd>{chips(dups.split(", "))}</dd></div>' if dups else ''}</dl>
+<ol class="pairs" aria-label="Najsilniejsze powiązania">{pairs}</ol></div></article>""")
+    if not ms:
+        camps = '<p class="lead muted">Baza jest pusta. Dodaj pierwsze materiały w formularzu wyżej.</p>'
+    else:
+        camps = "".join(cards) or '<p class="lead muted">Żadne dwa materiały nie mają jeszcze powiązania ≥ 0,5.</p>'
+    rows = []
+    for m in ms:
+        c = where.get(m.id)
+        camp = (f'<a href="/#{e(c["id"])}">{e(c["id"])}</a>' if c and len(c["members"]) > 1
+                else '<span class="muted">nowy wzorzec</span>')
+        rows.append(f"""<tr><td class="id">{mlink(m.id, '')}<small>{e(m.name) if m.name != m.id else ''}</small></td>
+<td>{stamp(m)}</td><td>{camp}</td><td>{chips(m.landing[:3])}</td><td>{chips(m.persons + m.claimed)}</td>
+<td>{chips(m.topics)}</td><td class="num">{len(m.missing) or '–'}</td></tr>""")
+    table = (f"""<div class="table"><table><thead><tr><th>Materiał</th><th>Wstępny werdykt</th><th>Kampania</th>
+<th>Domena strony</th><th>Osoby i marki</th><th>Temat</th><th>Braki danych</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>"""
+             if ms else '<p class="lead muted">Nic tu jeszcze nie ma.</p>')
+    clear = ('<form class="rm" method="post" action="/wyczysc" data-confirm="Usunąć wszystkie materiały z bazy?">'
+             '<button class="btn btn-line btn-sm">Wyczyść bazę</button></form>') if ms else ""
+    return page("Kampanie", f"""{hero}{form}
+<section class="sec" id="kampanie" aria-labelledby="kampanie-t"><div class="wrap"><div class="sec-head"><h2 id="kampanie-t">Kampanie</h2>
+<p>Materiał należy do kampanii, gdy ma w niej co najmniej jedno powiązanie o sile ≥ {num(k.LINK)}. Kampanie, których
+materiały są średnio podobne w stopniu ≥ {num(k.FAMILY)}, tworzą rodzinę. {many_of(lone)} bez takiego powiązania to nowe wzorce.</p></div>
+<div class="camps">{camps}</div></div></section>
+<section class="sec" id="materialy" aria-labelledby="materialy-t"><div class="wrap"><div class="sec-head"><h2 id="materialy-t">Materiały</h2>
+<p>Wstępny werdykt to suma punktów za cechy oszustwa: od 4 punktów wysokie ryzyko, od 2 podejrzane. Kliknij materiał,
+żeby zobaczyć powody, braki danych i podobne materiały.</p></div>{table}{clear}</div></section>""", "k", refresh=True)
 
 
 def features(m) -> str:
-    rows = [("Tytuł", e(m.title) or "–"), ("Domeny stron", tags(m.landing)),
-            ("Wiek domen (RDAP)", tags(f"{d}: {a} dni" for d, a in m.ages.items() if a is not None)),
-            ("Przekierowania", tags(" → ".join(c) for c in m.redirects)), ("Identyfikatory", tags(m.trackers)),
-            ("Schemat parametrów linku", tags(m.params)), ("IP serwera", tags(m.ips)),
-            ("Osoby", tags(m.persons)), ("Udawane marki", tags(m.claimed)), ("Temat", tags(m.topics)),
-            ("Pola formularzy", tags(m.forms)), ("Inne domeny", tags(m.domains[:25])),
-            ("Obrazy (dHash)", f"{len(m.images)}"), ("Pliki strony", tags(m.assets[:20])),
-            ("Przeczytane", tags(m.sources)), ("Braki danych", tags(m.missing))]
-    table = "".join(f"<tr><th>{a}</th><td>{b}</td></tr>" for a, b in rows)
-    return f"<table>{table}</table><h3 style='margin-top:12px'>Tekst (początek)</h3><pre>{e(m.text[:1500])}</pre>"
+    rows = [("Tytuł strony", e(m.title) or '<span class="none">brak</span>'), ("Domeny stron", chips(m.landing)),
+            ("Wiek domen (RDAP)", chips(f"{d}: {a} dni" for d, a in m.ages.items() if a is not None)),
+            ("Przekierowania", chips(" → ".join(c) for c in m.redirects)), ("Identyfikatory", chips(m.trackers)),
+            ("Schemat parametrów linku", chips(m.params)), ("IP serwera", chips(m.ips)),
+            ("Osoby", chips(m.persons)), ("Udawane marki", chips(m.claimed)), ("Temat", chips(m.topics)),
+            ("Pola formularzy", chips(m.forms)), ("Obrazy (dHash)", f'<span class="num">{len(m.images)}</span>'),
+            ("Inne domeny", chips(m.domains[:25])), ("Pliki strony", chips(m.assets[:20])), ("Przeczytane", chips(m.sources))]
+    dl = "".join(f"<div><dt>{a}</dt><dd>{b}</dd></div>" for a, b in rows)
+    text = f'<div class="text">{e(m.text[:3000])}</div>' if m.text else ""
+    return f'<dl class="feat">{dl}</dl>{text}'
 
 
-def material(m, placed=None, base=None) -> bytes:
+def material(m, placed=None, base=None, note="") -> bytes:
     base = base or state["base"]
-    flags = "".join(f"<li>+{p} {e(why)}</li>" for p, why in k.flags(m)) or "<li class='mut'>brak</li>"
+    flags = "".join(f"<li><b>+{p}</b><span>{e(why)}</span></li>" for p, why in k.flags(m))
+    flags = f'<ol class="flags">{flags}</ol>' if flags else '<p class="muted">Nic z cech, które znamy z oszustw.</p>'
     placed = placed or base.place(m, state["campaigns"])
     if placed["campaign"]:
         avg, top = placed["fit"][placed["campaign"]]
-        where = f"<b>{e(placed['campaign'])}</b> (najsilniejsze powiązanie {top:.2f}, średnio {avg:.2f})"
+        where = (f'<a class="place-id" href="/#{e(placed["campaign"])}">{e(placed["campaign"])}</a>'
+                 f'<p>Najsilniejsze powiązanie z kampanią {num(top)}, średnio {num(avg)}.</p>')
     else:
         best = max(placed["fit"].items(), key=lambda x: x[1][1], default=None)
-        where = ("<b>nowy wzorzec</b>: brak powiązania ≥ " + str(k.LINK) +
-                 (f" (najbliżej {e(best[0])}: {best[1][1]:.2f})" if best else ""))
+        where = (f'<span class="place-id new">Nowy wzorzec</span><p>Żadne powiązanie nie sięga {num(k.LINK)}.'
+                 + (f" Najbliżej jest {e(best[0])} ({num(best[1][1])})." if best else "") + "</p>")
+    gaps = "".join(f"<li>{e(x)}</li>" for x in m.missing)
+    gaps = (f'<h2 style="margin-top:28px">Czego zabrakło</h2><ul class="gaps">{gaps}</ul><p class="hint" style="margin-top:10px">'
+            f'Brak danych nie obniża wyniku: to brak przesłanki, nie przesłanka przeciw.</p>') if gaps else \
+        '<p class="hint" style="margin-top:20px">Wszystkie wgrane źródła udało się odczytać.</p>'
     similar = []
     for score, other in placed["similar"]:
         if score < 0.05:
             break
-        ev = base.compare(m, base.by_id[other])[1]
-        similar.append(f"<div class='card'><b>{score:.2f}</b> {mlink(other)} {evidence(ev)}</div>")
-    return page(m.id, f"""<h1>{e(m.name)}</h1>
-<div class="card"><h3>Wstępny werdykt: {risk(m)}</h3><ul>{flags}</ul><div>Kampania: {where}</div></div>
-<h2>Podobne materiały i przesłanki</h2>{''.join(similar) or '<p class="mut">brak</p>'}
-<h2>Wyodrębnione cechy</h2><div class="card wrap">{features(m)}</div>""")
+        similar.append(pair(score, mlink(other, ""), base.compare(m, base.by_id[other])[1]))
+    similar = f'<ol class="pairs">{"".join(similar)}</ol>' if similar else '<p class="muted">Brak podobnych materiałów.</p>'
+    remove = (f'<form class="rm" method="post" action="/usun"><input type="hidden" name="id" value="{e(m.id)}">'
+              f'<button class="btn btn-line btn-sm">Usuń z bazy</button></form>') if m.id in state["base"].by_id else ""
+    note = f'<div class="notice" role="status">{note}</div>' if note else ""
+    return page(m.id, f"""<section class="wrap hero"><div class="case-head"><div><p class="eyebrow">Materiał {e(m.id)}</p>
+<h1>{e(m.name)}</h1></div><div>{stamp(m, big=True)}</div></div>{note}
+<div class="case-grid"><div class="panel"><h2>Co zwraca uwagę</h2>{flags}</div>
+<div class="panel place"><h2>Kampania</h2>{where}{gaps}</div></div></section>
+<section class="sec"><div class="wrap"><div class="sec-head"><h2>Podobne materiały</h2><p>Każde powiązanie z przesłankami
+i ich siłą. Przesłanki składają się jak niezależne poszlaki: 1 − ∏(1 − siła).</p></div>{similar}</div></section>
+<section class="sec"><div class="wrap"><div class="sec-head"><h2>Wyodrębnione cechy</h2><p>To, co odczytaliśmy z plików,
+strony i tekstu. Z tych cech biorą się przesłanki.</p></div>{features(m)}{remove}</div></section>""")
 
 
 def graph() -> bytes:
     base, campaigns = state["base"], state["campaigns"]
     cols = max(1, math.ceil(math.sqrt(len(campaigns))))
-    cell, pos, parts = 260, {}, []
+    cell, pos, parts = 280, {}, []
     for i, c in enumerate(campaigns):
-        cx, cy = cell * (i % cols) + cell / 2, cell * (i // cols) + cell / 2
-        r = 0 if len(c["members"]) == 1 else 40 + 12 * len(c["members"])
-        r = min(r, cell / 2 - 50)  # room for the label above the ring
-        parts.append(f'<circle cx="{cx}" cy="{cy}" r="{r + 22}" fill="none" stroke="var(--line)" stroke-dasharray="4"/>'
-                     f'<text x="{cx}" y="{cy - r - 28}" text-anchor="middle" font-size="13" fill="var(--mut)">'
-                     f'{e(c["id"])} {e(c["label"][:34])}</text>')
+        cx, cy = cell * (i % cols) + cell / 2, cell * (i // cols) + cell / 2 + 10
+        r = 0 if len(c["members"]) == 1 else min(40 + 12 * len(c["members"]), cell / 2 - 56)
+        parts.append(f'<circle class="g-ring" cx="{cx}" cy="{cy}" r="{r + 24}"/>'
+                     f'<text class="g-label" x="{cx}" y="{cy - r - 36}" text-anchor="middle">{e(c["id"])} '
+                     f'<tspan>{e(c["label"][:30])}</tspan></text>')
         for j, mid in enumerate(c["members"]):
-            a = 2 * math.pi * j / len(c["members"])
+            a = 2 * math.pi * j / len(c["members"]) - math.pi / 2
             pos[mid] = (cx + r * math.cos(a), cy + r * math.sin(a))
-    lines = []
-    ms = base.materials
+    lines, ms = [], base.materials
     for i in range(len(ms)):
         for j in range(i + 1, len(ms)):
             s, ev = base.compare(ms[i], ms[j])
             if s >= k.FAMILY and ms[i].id in pos and ms[j].id in pos:
                 (x1, y1), (x2, y2) = pos[ms[i].id], pos[ms[j].id]
-                why = f"{ms[i].id} ~ {ms[j].id}: {s:.2f}\n" + "\n".join(w for _, _, w in ev[:4])
-                lines.append(f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" stroke="var(--acc)" '
-                             f'stroke-width="{1 + 5 * s:.1f}" opacity="{0.25 + 0.6 * s:.2f}"><title>{e(why)}</title></line>')
+                why = f"{ms[i].id} ~ {ms[j].id}: {num(s)}\n" + "\n".join(w for _, _, w in ev[:4])
+                lines.append(f'<line class="g-line" x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
+                             f'stroke-width="{1 + 5 * s:.1f}" opacity="{0.2 + 0.6 * s:.2f}"><title>{e(why)}</title></line>')
     nodes = []
     for m in ms:
-        if m.id not in pos:
-            continue
-        x, y = pos[m.id]
-        pts = k.verdict(m)[1]
-        color = "var(--hi)" if pts >= 4 else "var(--mid)" if pts >= 2 else "var(--ok)"
-        nodes.append(f'<a href="/m/{quote(m.id)}"><circle cx="{x:.0f}" cy="{y:.0f}" r="14" fill="{color}">'
-                     f'<title>{e(m.name)}</title></circle><text x="{x:.0f}" y="{y + 4:.0f}" text-anchor="middle" '
-                     f'font-size="11" fill="#fff">{e(m.id[:4])}</text></a>')
+        if m.id in pos:
+            x, y = pos[m.id]
+            pts = k.verdict(m)[1]
+            cls = "hi" if pts >= 4 else "mid" if pts >= 2 else "ok"
+            nodes.append(f'<a href="/m/{quote(m.id)}"><circle class="g-node {cls}" cx="{x:.0f}" cy="{y:.0f}" r="17">'
+                         f'<title>{e(m.name)}</title></circle><text class="g-text {cls}" x="{x:.0f}" y="{y + 4:.0f}" '
+                         f'text-anchor="middle">{e(m.id[:4])}</text></a>')
     rows = max(1, math.ceil(len(campaigns) / cols))
-    svg = (f'<svg viewBox="0 0 {cols * cell} {rows * cell}" width="100%" style="max-width:{cols * cell}px">'
-           f'{"".join(parts)}{"".join(lines)}{"".join(nodes)}</svg>')
-    return page("Graf powiązań", f"""<h1>Graf powiązań</h1><p class="mut">Kółko przerywane = kampania. Linia = para
-o podobieństwie ≥ {k.FAMILY} (grubsza = silniejsza; najedź, by zobaczyć przesłanki). Kolor = werdykt.</p>
-<div class="card wrap">{svg}</div>""")
+    svg = (f'<svg viewBox="0 0 {cols * cell} {rows * cell + 20}" role="img" aria-label="Graf powiązań materiałów">'
+           f'{"".join(parts)}{"".join(lines)}{"".join(nodes)}</svg>') if ms else '<p class="muted">Baza jest pusta.</p>'
+    return page("Graf powiązań", f"""<section class="wrap hero"><p class="eyebrow">Graf powiązań</p>
+<h1>Kto z kim <span>i dlaczego.</span></h1><p class="lead">Okrąg to kampania. Linia łączy parę o podobieństwie
+≥ {num(k.FAMILY)}: im grubsza, tym silniejsza. Najedź na linię, żeby zobaczyć przesłanki, kliknij materiał, żeby go otworzyć.</p></section>
+<section class="wrap"><div class="graph">{svg}</div><ul class="legend"><li><i class="hi"></i>wysokie ryzyko</li>
+<li><i></i>podejrzane</li><li><i class="ok"></i>brak sygnałów</li><li><i class="ln"></i>powiązanie</li></ul></section>""", "g")
 
 
 def export() -> bytes:
@@ -238,51 +442,26 @@ def export() -> bytes:
     return json.dumps(out, ensure_ascii=False, indent=1).encode()
 
 
-def analyse(form: dict, files: list[tuple[str, bytes]]) -> bytes:
-    with lock:
-        n = sum(1 for m in state["base"].materials if m.origin == "dodane") + 1
-    name = (form.get("url") or (files[0][0] if files else "") or form.get("tekst", "")[:40] or "materiał").strip()
-    m = k.Material(id=f"nowy-{n}", name=name, origin="dodane")
-    with tempfile.TemporaryDirectory() as tmp:
-        paths = []
-        for fname, data in files:
-            safe = re.sub(r"[^\w.\- ]", "_", Path(fname).name)[:120] or "plik"
-            (p := Path(tmp) / safe).write_bytes(data)
-            paths.append(p)
-        if url := form.get("url", "").strip():
-            try:
-                k.fetch(m, url if "://" in url else "https://" + url)
-            except Exception as err:  # the page is gone or refuses: its address still says something
-                m.missing.append(f"strona {url}: niedostępna ({err.__class__.__name__}: {str(err)[:120]})")
-                k.add_url(m, url if "://" in url else "https://" + url, landing=True)
-        if text := form.get("tekst", "").strip():
-            k.add_text(m, text)
-            for dom in k.DOMAIN_TEXT.findall(text.lower()):  # an address in the ad's caption is where it leads
-                k.add_url(m, "https://" + dom, landing=True)
-            m.sources.append("tekst z formularza")
-        k.from_files(m, paths, Path(tmp))
-    if ONLINE:
-        k.look_up_ages(m)
-    with lock:
-        materials = state["base"].materials + [m]
-    base = k.Base(materials)
-    campaigns = base.campaigns()
-    placed = base.place(m, campaigns)
-    if form.get("dodaj"):
-        save(materials)
-        with lock:
-            state.update(base=base, campaigns=campaigns)
-    return material(m, placed, base)
+TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".woff2": "font/woff2"}
 
 
 class Handler(BaseHTTPRequestHandler):
-    def send(self, body: bytes, ctype="text/html; charset=utf-8", code=200):
+    def send(self, body: bytes, ctype="text/html; charset=utf-8", code=200, cache=False):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; "
+                         "script-src 'self'; font-src 'self'; img-src data:; connect-src 'self'; form-action 'self'")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "max-age=3600" if cache else "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def go(self, where: str):
+        self.send_response(303)
+        self.send_header("Location", where)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self):
         path = unquote(urlsplit(self.path).path)
@@ -292,46 +471,78 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(graph())
         if path == "/eksport.json":
             return self.send(export(), "application/json; charset=utf-8")
+        if path.startswith("/static/") and (f := STATIC / clean(path[8:])).is_file() and f.suffix in TYPES:
+            return self.send(f.read_bytes(), TYPES[f.suffix], cache=True)
         if path.startswith("/m/") and (m := state["base"].by_id.get(path[3:])):
-            return self.send(material(m))
-        self.send(page("Brak", "<h1>Nie ma takiej strony</h1>"), code=404)
+            new = "nowy" in parse_qs(urlsplit(self.path).query)
+            return self.send(material(m, note="Zapisano w bazie. Kampanie są przeliczone." if new else ""))
+        self.send(page("Brak", '<section class="wrap hero"><h1>Nie ma takiej strony.</h1></section>'), code=404)
 
     def do_POST(self):
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != self.headers.get("Host"):  # another site's form cannot drive this one
+            return self.send(b"", code=403)
         size = int(self.headers.get("Content-Length") or 0)
         if size > MAX_UPLOAD:
-            return self.send(page("Za duże", "<h1>Pliki są za duże (limit 60 MB)</h1>"), code=413)
-        body = self.rfile.read(size)
-        if self.path == "/przelicz":
-            threading.Thread(target=load, kwargs={"force": True}, daemon=True).start()
-            self.send_response(303)
-            self.send_header("Location", "/")
-            return self.end_headers()
-        if self.path != "/analizuj":
-            return self.send(page("Brak", "<h1>Nie ma takiej strony</h1>"), code=404)
-        msg = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(
-            b"Content-Type: " + self.headers.get("Content-Type", "").encode() + b"\r\n\r\n" + body)
-        form, files = {}, []
-        for part in msg.iter_parts() if msg.is_multipart() else []:
-            name = part.get_param("name", header="content-disposition")
-            data = part.get_payload(decode=True) or b""
-            if part.get_filename():
-                if data:
-                    files.append((part.get_filename(), data))
-            elif name:
-                form[name] = data.decode("utf-8", "replace")
-        if not (form.get("url", "").strip() or form.get("tekst", "").strip() or files):
-            return self.send(page("Pusto", "<h1>Podaj adres, tekst albo plik</h1>"), code=400)
+            return self.send(page("Za duże", '<section class="wrap hero"><h1>Za duże: limit to 2 GB.</h1></section>'), code=413)
+        work_dir = Path(tempfile.mkdtemp(prefix="wgrane-"))
         try:
-            self.send(analyse(form, files))
+            with open(body := work_dir / "body", "wb") as out:
+                left = size
+                while left > 0 and (chunk := self.rfile.read(min(left, 1 << 20))):
+                    out.write(chunk)
+                    left -= len(chunk)
+            ctype = self.headers.get("Content-Type", "")
+            if ctype.startswith("multipart/"):
+                (spool := work_dir / "spool").mkdir()
+                form, files = parse_multipart(body, ctype, spool)
+            else:
+                form = {x: v[0] for x, v in parse_qs(body.read_text("utf-8", "replace")).items()}
+                files = []
+            body.unlink()
+            if self.path == "/usun":
+                with work:
+                    commit([m for m in state["base"].materials if m.id != form.get("id")])
+                return self.go("/#materialy")
+            if self.path == "/wyczysc":
+                with work:
+                    commit([])
+                return self.go("/")
+            if self.path != "/analizuj":
+                return self.send(page("Brak", '<section class="wrap hero"><h1>Nie ma takiej strony.</h1></section>'), code=404)
+            entries = expand(files, spool) if files else []
+            if not (form.get("url", "").strip() or form.get("tekst", "").strip() or entries):
+                return self.send(page("Pusto", '<section class="wrap hero"><h1>Podaj adres, tekst albo pliki.</h1>'
+                                               '<p class="lead"><a href="/#dodaj">Wróć do formularza</a></p></section>'), code=400)
+            keep = bool(form.get("dodaj"))
+            one = form.get("url", "").strip() or form.get("tekst", "").strip()
+            if not one and len(group(entries, False)) > 1:  # a set of incidents: read in the background, page refreshes
+                state["status"] = "Rozpakowuję wgrane pliki"  # set before the redirect, so the page knows to refresh
+                threading.Thread(target=run_batch, args=(form, entries, work_dir), daemon=True).start()
+                work_dir = None
+                return self.go("/#kampanie")
+            with work:
+                m = ingest(form, entries, work_dir, keep)[0]
+                state["status"] = ""
+                if keep:
+                    return self.go(f"/m/{quote(m.id)}?nowy=1")
+                base = k.Base(state["base"].materials + [m])
+                return self.send(material(m, base.place(m, base.campaigns()), base,
+                                          "Tego materiału nie zapisano w bazie. Pokazujemy, gdzie by pasował."))
         except Exception as err:
-            self.send(page("Błąd", f"<h1>Nie udało się przeanalizować</h1><pre>{e(repr(err))}</pre>"), code=500)
+            state["status"] = ""
+            self.send(page("Błąd", f'<section class="wrap hero"><h1>Nie udało się przeanalizować.</h1>'
+                                   f'<p class="lead">{e(err.__class__.__name__)}: {e(str(err))}</p></section>'), code=500)
+        finally:
+            if work_dir:
+                shutil.rmtree(work_dir, ignore_errors=True)
 
     def log_message(self, *args):
         pass
 
 
 if __name__ == "__main__":
-    threading.Thread(target=load, daemon=True).start()
+    load()
     host, port = os.environ.get("HOST", "0.0.0.0"), int(os.environ.get("PORT", "8501"))
     print(f"kampanie: http://127.0.0.1:{port}", flush=True)
     ThreadingHTTPServer((host, port), Handler).serve_forever()

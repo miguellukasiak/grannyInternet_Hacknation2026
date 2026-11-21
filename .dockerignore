@@ -1,0 +1,4 @@
+# only the campaign demonstrator builds from the root: its code and the site fonts, never dane/ or .env
+*
+!kampanie/
+!site/fonts/
