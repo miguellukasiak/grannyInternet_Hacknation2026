@@ -78,6 +78,21 @@ class Campaigns(unittest.TestCase):
         self.assertIn("identyfikator", [kind for _, kind, _ in ev])
         self.assertIn(("a", "b"), self.base.campaigns()[0]["duplicates"])
 
+    def test_fast_matrix_is_exact(self):
+        ms = self.ms
+        slow = [[self.base.compare(a, b)[0] if a is not b else 1.0 for b in ms] for a in ms]
+        self.assertEqual(self.base.matrix().round(9).tolist(), [[round(x, 9) for x in r] for r in slow])
+
+    def test_soft_clues_make_no_campaign(self):
+        x, y = k.finish(k.Material(id="x", name="x")), k.finish(k.Material(id="y", name="y"))
+        base = k.Base([x, y])
+        base._pairs[("x", "y")] = (0.8, [(0.7, "narracja", ""), (0.35, "osoba", "")])  # one story, one celebrity
+        self.assertEqual(base.link(x, y), 0.0)
+        base._pairs[("x", "y")] = (0.8, [(0.6, "parametry", ""), (0.48, "tekst", "")])  # UTM and a checkout footer
+        self.assertEqual(base.link(x, y), 0.0)
+        base._pairs[("x", "y")] = (0.97, [(0.95, "identyfikator", ""), (0.35, "osoba", "")])
+        self.assertEqual(base.link(x, y), 0.97)
+
     def test_missing_data_is_no_counter_evidence(self):
         empty = k.finish(k.Material(id="x", name="x"))
         self.assertEqual(self.base.compare(self.by["a"], empty)[0], 0)
@@ -135,6 +150,42 @@ class Upload(unittest.TestCase):
             self.assertEqual([n for n, _ in app.group(inc, False)], ["inc1", "inc2"])  # wrappers stripped
             self.assertEqual(len(app.group(inc, True)), 1)  # a URL or text makes it one material
             self.assertEqual(app.new_id("a b", {"a-b"}), "a-b-2")
+
+
+class Collector(unittest.TestCase):
+    """Blocked domains from the collector's verdicts.db, and a reported domain that is already among them."""
+
+    def test_read_and_report(self):
+        import json
+        import sqlite3
+
+        import app
+        import baza
+        ad = {"ad_creative_bodies": ["Lekarze ukrywają ten cudowny lek na żylaki!"], "trackers": {"a.top": ["fb:123", "GTM-XXXXXX"]},
+              "page_id": "77", "ips": {"a.top": ["203.0.113.5"]}, "age_days": {"a.top": 9}}
+        with tempfile.TemporaryDirectory() as d:
+            db = sqlite3.connect(path := f"{d}/verdicts.db")
+            db.execute("CREATE TABLE verdicts (domain, verdict, reason, decided_by, ad, seen_at, decided_at)")
+            db.executemany("INSERT INTO verdicts VALUES (?,?,?,?,?,?,?)", [
+                ("a.top", "block", "young domain", None, json.dumps(ad), "2026-11-20", None),
+                ("b.pl", "block", "llm: scam", None, None, "2026-11-19", None),
+                ("c.pl", "block", "fake shop", "human", None, "2026-11-18", "2026-11-21"),
+                ("d.pl", "pass", "ok", None, None, "2026-11-21", None)])
+            db.commit()
+            db.close()
+            found = baza.read(path)
+        self.assertEqual([(who, m.id) for who, m in found], [("human", "c.pl"), ("rule", "a.top"), ("llm", "b.pl")])
+        a = found[1][1]
+        self.assertEqual(a.trackers, ["piksel Meta 123", "strona FB 77"])  # the GTM placeholder is no ID
+        self.assertEqual((a.ips, a.ages), (["203.0.113.5"], {"a.top": 9}))
+        self.assertGreaterEqual(k.verdict(a)[1], 2)
+        app.state["base"] = k.Base([m for _, m in found])
+        m, note = app.known("a.top")
+        self.assertIs(m, a)
+        self.assertIn("Kolektor ją zablokował, reguła: young domain", note)
+        self.assertIsNone(app.known("e.pl")[0])
+        self.assertEqual(k.domain_of("a.netlify.app"), "a.netlify.app")  # sites on one platform are not one domain
+        self.assertTrue(k.on_cdn("188.114.96.3") and not k.on_cdn("203.0.113.5"))
 
 
 if __name__ == "__main__":

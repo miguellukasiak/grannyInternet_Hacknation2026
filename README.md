@@ -23,6 +23,7 @@ adres strony albo sam tekst reklamy.
 
 - Tryb offline: ustaw `ONLINE=0` (PowerShell: `$env:ONLINE=0`, bash: `ONLINE=0 docker compose up --build kampanie`). Wtedy nic nie wychodzi z kontenera, a wklejony adres jest tylko zapisany. Bez tej zmiennej moduł pyta RDAP o wiek domen docelowych i pobiera wklejoną stronę (z blokadą adresów prywatnych, SSRF).
 - Wgrane materiały i ich cechy trafiają do wolumenu `kampanie` (`/data/baza.json`). Materiał usuwa się na jego stronie, całą bazę przyciskiem „Wyczyść bazę”.
+- Domeny zablokowane przez kolektor: gdy działa cały system, kontener widzi `verdicts.db` tylko do odczytu (wolumen `verdicts`, zmienna `KOLEKTOR`) i przycisk „Wczytaj zablokowane domeny” wczytuje je jako materiały: tekst reklamy, stronę, linki, IP, wiek domeny, piksele i stronę FB. Bez tej bazy przycisku nie ma.
 - Bez GUI: `docker compose run --rm -v "${PWD}/folder:/x:ro" kampanie python kampanie.py /x` wypisuje kampanie i werdykty jako tekst (każdy podfolder to jeden materiał).
 - Testy: `docker compose run --rm --no-deps kampanie python -m unittest -v`.
 
@@ -75,14 +76,18 @@ Dwa materiały są porównywane sygnał po sygnale. Każdy pasujący sygnał to 
 | wspólne domeny w linkach i zasobach | 0,3 za domenę, do 0,6 |
 | te same pliki strony | 0,15 za plik, do 0,6 |
 | zbliżony szablon HTML (≥ 30% wspólnej struktury) | 0,6 × udział |
-| ten sam adres IP serwera | 0,5 |
+| ten sam adres IP serwera (poza CDN i hostingiem współdzielonym) | 0,4 |
 | te same osoby | 0,35 |
 | ta sama podrabiana marka | 0,30 |
 | ten sam temat | 0,15 |
 
 Przesłanki składają się jak niezależne poszlaki: `wynik = 1 − ∏(1 − siła)`. Sygnały wspólne dla co najmniej
 40% materiałów (platformy, CDN-y, popularne biblioteki) i lista domen ogólnych (facebook.com,
-googleapis.com…) nie są przesłanką.
+googleapis.com…) nie są przesłanką. Adresy anycast Cloudflare i Shopify też nie, bo odpowiadają z nich tysiące
+niezwiązanych stron. To samo dotyczy każdego IP, z którego w bazie odpowiada co najmniej 20 domen: to hosting
+współdzielony (w bazie kolektora np. Lovable, Netlify, Vercel), a nie jeden właściciel. Wspólny serwer ma siłę poniżej progu kampanii, bo hosting współdzielony obsługuje wiele obcych
+sobie stron, więc sam nie tworzy kampanii. Subdomeny platform (x.netlify.app, y.myshopify.com, z.lovable.app) to
+osobne strony, a nie jedna domena.
 
 **Brak danych to brak przesłanki, nigdy przesłanka przeciw.** Strona, która już nie działa, łączy się dalej
 tekstem reklamy i zrzutem ekranu. Każdy materiał ma listę tego, czego zabrakło (np. „brak tekstu”, „RDAP: brak
@@ -92,12 +97,17 @@ odpowiedzi”), więc widać, na czym opiera się wynik.
 
 - **Kampania**: grupowanie aglomeracyjne z pojedynczym wiązaniem (single linkage) na odległości `1 − wynik`
   przy progu 0,5. Każdy członek kampanii ma co najmniej jedno powiązanie o sile ≥ 0,5 i właśnie to powiązanie
-  jest pokazane jako dowód.
+  jest pokazane jako dowód. Powiązanie musi mieć co najmniej jedną twardą przesłankę (identyfikator, domena,
+  tekst skopiowany co najmniej w 40%, obraz, szablon, pliki). Sama narracja, temat, osoba, marka i serwer nie
+  wystarczą: na 5404 zablokowanych domenach kolektora skleiły w łańcuch 1054 domeny ze zdrowiem, paczkami i
+  inwestycjami naraz. Schemat parametrów linku też jest tylko poszlaką (`utm_source,utm_medium,utm_campaign`
+  ma każdy reklamodawca), a 15–20% wspólnego tekstu to zwykle stopka kasy tej samej platformy sklepowej: razem
+  trzymały jeszcze łańcuch 431 domen.
 - **Rodzina kampanii**: wiązanie średnie (average linkage) przy progu 0,2. Słabe poszlaki, takie jak temat
   czy osoba, łączą wtedy kampanie w rodziny, ale nie sklejają wszystkiego w łańcuch.
 - **Duplikaty i warianty**: ten sam tekst (Jaccard fragmentów ≥ 0,9) albo ta sama domena docelowa przy
   Jaccardzie ≥ 0,7. Kopia pod inną domeną jest więc oznaczona jako duplikat, a reszta kampanii to warianty.
-- **Nowy materiał**: trafia do kampanii, z którą ma najsilniejsze powiązanie ≥ 0,5. Jeśli takiego nie ma,
+- **Nowy materiał**: trafia do kampanii, z którą ma najsilniejsze powiązanie ≥ 0,5 z twardą przesłanką. Jeśli takiego nie ma,
   dostaje status „nowy wzorzec” razem z informacją, co było najbliżej.
 
 ### 4. Wstępny werdykt
@@ -125,6 +135,7 @@ która zniknęła, nadal łączy się z kampanią przez tekst, adres i obraz.
 
 ### 6. Interfejs
 
+- `/#zglos`: zgłoszenie podejrzanej domeny, tak jak na grannyinternet.me. Domena, którą baza już zna, od razu pokazuje, kto ją zablokował (reguła, model albo człowiek) i do jakiej kampanii należy. Nowa domena staje się materiałem i dostaje werdykt.
 - `/`: wgrywanie materiałów (pliki, folder, ZIP, adres, tekst), kampanie z rodzinami, domenami, duplikatami i najmocniejszymi parami wraz z przesłankami oraz tabela materiałów z werdyktami.
 - `/m/<id>`: werdykt z punktami, cechy, brakujące dane oraz kampania i najbliższe materiały; tu materiał usuwa się z bazy.
 - `/graf`: graf powiązań (SVG), kampanie jako pierścienie.

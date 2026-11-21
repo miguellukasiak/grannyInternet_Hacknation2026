@@ -12,6 +12,7 @@ import base64
 import email
 import email.policy
 import html
+import itertools
 import ipaddress
 import json
 import math
@@ -33,22 +34,41 @@ from urllib.parse import parse_qsl, urljoin, urlsplit
 import numpy as np
 import tldextract
 from PIL import Image
+from scipy.sparse import csr_matrix
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 LINK = 0.5  # score of one campaign: single linkage, every member has at least one link this strong, shown as evidence
+SOFT = {"narracja", "temat", "osoba", "marka", "serwer", "parametry"}  # one story, celebrity, host or UTM scheme is shared by unrelated scams
+STRONG_TEXT = 0.4  # share of 5-word runs that is a copied text; a shop platform's checkout footer alone gives 15–20%
 FAMILY = 0.2  # score of a family of campaigns: average linkage, so weak clues (a topic, a person) do not chain everything
 DUPLICATE = 0.9  # share of 5-word runs: the same text, a copy of one page
 IMAGE_DIST = 5  # bits of 64 in which two dHashes may differ and still be one picture (recompressed, resized)
-_ext = tldextract.TLDExtract(suffix_list_urls=())  # the bundled suffix list: no download at start
+# the bundled suffix list (no download at start) with its private part: x.netlify.app, y.myshopify.com, z.lovable.app
+# are separate sites of separate owners, not one domain
+_ext = tldextract.TLDExtract(suffix_list_urls=(), include_psl_private_domains=True)
 IMAGES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 VIDEOS = {".mp4", ".mov", ".webm", ".m3u8", ".ts", ".avi", ".mkv"}
+# anycast addresses of a CDN or a shop platform: thousands of unrelated sites answer from one IP (Cloudflare's published
+# ranges, Shopify's storefronts). shortcut: the two biggest in our data; add a range when it chains a campaign
+SHARED_IP = 20  # domains on one IP: from here on a hosting platform, not one owner
+
+CDN = [ipaddress.ip_network(n) for n in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
+    "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22", "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32",
+    "2405:b500::/32", "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32", "23.227.38.0/23")]
 # hosts every page loads: sharing them says nothing about a common source
 COMMON = {"facebook.com", "facebook.net", "fbcdn.net", "google.com", "googleapis.com", "gstatic.com", "google.pl",
           "googletagmanager.com", "google-analytics.com", "doubleclick.net", "youtube.com", "ytimg.com",
           "jsdelivr.net", "cloudflare.com", "cdnjs.com", "jquery.com", "bootstrapcdn.com", "unpkg.com", "w3.org",
           "schema.org", "gravatar.com", "wp.com", "wordpress.org", "apple.com", "instagram.com", "twitter.com",
-          "x.com", "tiktok.com", "cloudflareinsights.com", "fontawesome.com", "typekit.net", "jsdelivr.com"}
+          "x.com", "tiktok.com", "cloudflareinsights.com", "fontawesome.com", "typekit.net", "jsdelivr.com",
+          # marketplaces and link hosts that unrelated ads point to (amazon.com: 121 of our blocked domains)
+          "amazon.com", "amazon.de", "amazon.it", "amazon.pl", "amazon.fr", "amazon.es", "amazon.co.uk", "a.co",
+          "amzn.to", "booking.com", "temu.com", "allegro.pl", "aliexpress.com", "ebay.com", "etsy.com", "olx.pl",
+          "fruugo.nl", "fruugo.pl", "meta.com", "fb.me", "fb.com", "m.me", "wa.me", "whatsapp.com", "linktr.ee",
+          "bit.ly", "t.me"}
 STOP = ("a aby ale albo bo by być był była było były co czy dla do gdy go i ich im in is jak jako je jego jej jest "
         "już ma mi mnie na nad nie nich nim niż o od on ona one oni po pod przez przy się są ta tak tam te tego tej "
         "ten to tu tym u w we wiele z za że ze żeby oraz także który która które którzy tylko też bardzo jeszcze "
@@ -147,6 +167,13 @@ def domain_of(host: str | None) -> str | None:
         return None
     except ValueError:
         return _ext(host).top_domain_under_public_suffix or None
+
+
+def on_cdn(ip: str) -> bool:
+    try:
+        return any(ipaddress.ip_address(ip) in net for net in CDN)
+    except ValueError:
+        return False
 
 
 def host_of(url: str) -> str | None:
@@ -530,6 +557,8 @@ class Base:
                         {("i", i) for i in m.ips})
         many = max(3, math.ceil(0.4 * n))  # in 40% of all materials: a platform, not a campaign
         self.common = {k for k, c in freq.items() if c >= many} | {("d", d) for d in COMMON}
+        # an IP that serves many of our domains is shared hosting (Lovable, Netlify, Vercel…), learned from the data itself
+        self.common |= {k for k, c in freq.items() if k[0] == "i" and (c >= SHARED_IP or on_cdn(k[1]))}
         texts = [m.text or "" for m in materials]
         self.vec = TfidfVectorizer(token_pattern=r"(?u)\b[^\W\d_]{3,}\b", stop_words=STOP, sublinear_tf=True,
                                    max_df=1.0 if n < 5 else 0.8, max_features=20000)
@@ -540,13 +569,68 @@ class Base:
             self.tfidf, self.terms = None, []
         self.row = {m.id: i for i, m in enumerate(materials)}
         self._pairs: dict = {}
+        self._cos = self._similar_texts()
+        self._jac = {"shingles": self._overlaps("shingles", 0.15, 20), "template": self._overlaps("template", 0.3, 30)}
+        self._matrix = None
+
+    def _similar_texts(self) -> dict:
+        """(row, row) -> cosine of the texts, for pairs at 0.25 or more: below it narration is no evidence."""
+        out = {}
+        if self.tfidf is None:
+            return out
+        for start in range(0, self.tfidf.shape[0], 1000):  # in blocks: all pairs of thousands of texts at once is GBs
+            block = (self.tfidf[start:start + 1000] @ self.tfidf.T).tocoo()
+            keep = (block.data >= 0.25) & (block.row + start < block.col)
+            out.update(zip(zip((block.row[keep] + start).tolist(), block.col[keep].tolist()), block.data[keep].tolist()))
+        return out
+
+    def _overlaps(self, attr: str, least: float, size: int) -> dict:
+        """(row, row) -> Jaccard of `attr` sets (each of at least `size`), where >= least: sparse products, not loops."""
+        rows = [i for i, m in enumerate(self.materials) if len(getattr(m, attr)) >= size]
+        if len(rows) < 2:
+            return {}
+        vocab, ind, ptr = {}, [], [0]
+        for i in rows:
+            ind += [vocab.setdefault(x, len(vocab)) for x in set(getattr(self.materials[i], attr))]
+            ptr.append(len(ind))
+        s = csr_matrix((np.ones(len(ind), np.float32), ind, ptr), shape=(len(rows), len(vocab)))
+        sizes, rows, out = np.diff(ptr), np.array(rows), {}
+        for start in range(0, len(rows), 1000):
+            both = (s[start:start + 1000] @ s.T).tocoo()
+            a, b = both.row + start, both.col
+            jac = both.data.astype(np.float64) / (sizes[a] + sizes[b] - both.data)  # counts: exact, as in jaccard()
+            keep = (a < b) & (jac >= least - 1e-6)
+            out.update(zip(zip(rows[a[keep]].tolist(), rows[b[keep]].tolist()), jac[keep].tolist()))
+        return out
+
+    def candidates(self) -> set:
+        """Every pair that shares something compare() looks at; any other pair scores 0, so it is never compared."""
+        pairs, index = set(self._cos), {}
+        for i, m in enumerate(self.materials):
+            keys = ({("d", x) for x in m.landing + m.domains} | {("a", x) for x in m.assets} |
+                    {("i", x) for x in m.ips}) - self.common
+            keys |= ({("t", x) for x in m.trackers} | {("p", x) for x in m.params} |
+                     {("o", x) for x in m.persons + m.claimed + m.topics})
+            for key in keys:
+                index.setdefault(key, []).append(i)
+        for rows in index.values():
+            pairs.update(itertools.combinations(rows, 2))
+        pairs.update(self._jac["shingles"], self._jac["template"])
+        pairs.update(itertools.combinations([i for i, m in enumerate(self.materials) if m.images], 2))
+        return pairs
+
+    def _key(self, a: Material, b: Material) -> tuple:
+        return tuple(sorted((self.row[a.id], self.row[b.id])))
+
+    def _jaccard(self, attr: str, a: Material, b: Material) -> float:
+        if a.id in self.row and b.id in self.row:  # worked out for the whole base at once; absent = below the bar
+            return self._jac[attr].get(self._key(a, b), 0.0)
+        return jaccard(getattr(a, attr), getattr(b, attr))
 
     def narration(self, a: Material, b: Material) -> tuple[float, list[str]]:
-        if self.tfidf is None or not a.text or not b.text:
+        if a.id not in self.row or b.id not in self.row or not (cos := self._cos.get(self._key(a, b))):
             return 0.0, []
-        x, y = self.tfidf[self.row[a.id]], self.tfidf[self.row[b.id]]
-        both = x.multiply(y)
-        cos = float(both.sum())
+        both = self.tfidf[self.row[a.id]].multiply(self.tfidf[self.row[b.id]])
         top = [self.terms[i] for i in np.argsort(-both.toarray()[0])[:6] if both[0, i] > 0]
         return cos, top
 
@@ -564,7 +648,7 @@ class Base:
             ev.append((0.95, "identyfikator", "ten sam identyfikator reklam/analityki: " + ", ".join(tr)))
         if land := rare("d", set(a.landing) & set(b.landing)):
             ev.append((0.9, "domena", "ta sama domena strony: " + ", ".join(land)))
-        if len(a.shingles) >= 20 and len(b.shingles) >= 20 and (cp := jaccard(a.shingles, b.shingles)) >= 0.15:
+        if len(a.shingles) >= 20 and len(b.shingles) >= 20 and (cp := self._jaccard("shingles", a, b)) >= 0.15:
             ev.append((min(0.95, 0.3 + cp), "tekst", f"{cp:.0%} wspólnych 5-wyrazowych fragmentów tekstu"))
         cos, words = self.narration(a, b)
         if cos >= 0.25:
@@ -575,13 +659,14 @@ class Base:
             ev.append((min(0.9, 0.6 + 0.1 * (len(same) - 1)), "obraz", "te same obrazy: " + ", ".join(same[:5])))
         if sch := sorted(set(a.params) & set(b.params)):
             ev.append((0.6, "parametry", "ten sam schemat parametrów linku z reklamy: " + "; ".join(sch)))
+        # below LINK: shared hosting serves many unrelated sites, so a server alone never makes a campaign
         if ips := rare("i", set(a.ips) & set(b.ips)):
-            ev.append((0.5, "serwer", "ten sam adres IP serwera: " + ", ".join(ips)))
+            ev.append((0.4, "serwer", "ten sam adres IP serwera: " + ", ".join(ips)))
         if doms := rare("d", (set(a.domains) | set(a.landing)) & (set(b.domains) | set(b.landing)) - set(land)):
             ev.append((min(0.6, 0.3 * len(doms)), "domeny", "wspólne domeny w linkach i zasobach: " + ", ".join(doms[:6])))
         if assets := rare("a", set(a.assets) & set(b.assets)):
             ev.append((min(0.6, 0.15 * len(assets)), "zasoby", "te same pliki strony: " + ", ".join(assets[:6])))
-        if len(a.template) >= 30 and len(b.template) >= 30 and (tp := jaccard(a.template, b.template)) >= 0.3:
+        if len(a.template) >= 30 and len(b.template) >= 30 and (tp := self._jaccard("template", a, b)) >= 0.3:
             ev.append((0.6 * tp, "szablon", f"zbliżony szablon HTML ({tp:.0%} wspólnej struktury)"))
         if who := sorted(set(a.persons) & set(b.persons)):
             ev.append((0.35, "osoba", "te same osoby: " + ", ".join(who)))
@@ -600,21 +685,31 @@ class Base:
         cp = jaccard(a.shingles, b.shingles) if min(len(a.shingles), len(b.shingles)) >= 20 else 0
         return cp >= DUPLICATE or (cp >= 0.7 and bool(set(a.landing) & set(b.landing)))
 
-    def matrix(self) -> np.ndarray:
-        n = len(self.materials)
-        s = np.eye(n)
-        for i in range(n):
-            for j in range(i + 1, n):
-                s[i, j] = s[j, i] = self.compare(self.materials[i], self.materials[j])[0]
-        return s
+    def link(self, a: Material, b: Material) -> float:
+        """compare()'s score if some evidence is hard; soft clues alone chained 1054 of our 5404 domains into one,
+        and generic UTM schemes with a shared checkout footer still 431."""
+        score, ev = self.compare(a, b)
+        hard = [s for s, kind, _ in ev if kind not in SOFT and (kind != "tekst" or s >= 0.3 + STRONG_TEXT)]
+        return score if hard else 0.0
 
-    def groups(self, level: float, linkage: str = "average") -> list[list[str]]:
+    def matrix(self, hard: bool = False) -> np.ndarray:
+        """Pair scores; hard=True keeps only pairs a campaign may be built on (see link())."""
+        if self._matrix is None:
+            s, h = np.eye(len(self.materials)), np.eye(len(self.materials))
+            for i, j in self.candidates():
+                a, b = self.materials[i], self.materials[j]
+                s[i, j] = s[j, i] = self.compare(a, b)[0]
+                h[i, j] = h[j, i] = self.link(a, b)
+            self._matrix = (s, h)
+        return self._matrix[hard]
+
+    def groups(self, level: float, linkage: str = "average", hard: bool = False) -> list[list[str]]:
         n = len(self.materials)
         if n < 2:
             return [[m.id for m in self.materials]] if n else []
         # sklearn merges only below the threshold; the rule is "at least `level`", as in place()
         labels = AgglomerativeClustering(n_clusters=None, metric="precomputed", linkage=linkage,
-                                         distance_threshold=1 - level + 1e-9).fit_predict(1 - self.matrix())
+                                         distance_threshold=1 - level + 1e-9).fit_predict(1 - self.matrix(hard))
         out: dict[int, list[str]] = {}
         for m, label in zip(self.materials, labels):
             out.setdefault(int(label), []).append(m.id)
@@ -623,7 +718,7 @@ class Base:
     def campaigns(self) -> list[dict]:
         fams = {mid: i for i, fam in enumerate(self.groups(FAMILY)) for mid in fam}
         out = []
-        for i, ids in enumerate(self.groups(LINK, "single"), 1):
+        for i, ids in enumerate(self.groups(LINK, "single", hard=True), 1):
             kinds, pairs = Counter(), []
             for x in range(len(ids)):
                 for y in range(x + 1, len(ids)):
@@ -648,7 +743,7 @@ class Base:
             if not members:
                 continue
             avg = sum(self.compare(new, self.by_id[x])[0] for x in members) / len(members)
-            top = max(self.compare(new, self.by_id[x])[0] for x in members)
+            top = max(self.link(new, self.by_id[x]) for x in members)
             where[c["id"]] = (avg, top)
             if top >= LINK and (best is None or top > where[best][1]):
                 best = c["id"]

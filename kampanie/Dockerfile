@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr t
 WORKDIR /app
 COPY kampanie/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY kampanie/kampanie.py kampanie/app.py kampanie/test_kampanie.py ./
+COPY kampanie/kampanie.py kampanie/app.py kampanie/baza.py kampanie/test_kampanie.py ./
 COPY kampanie/static static
 COPY site/fonts static/fonts
 RUN useradd --create-home --uid 1000 app && mkdir /data && chown 1000 /data

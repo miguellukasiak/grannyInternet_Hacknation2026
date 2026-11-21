@@ -18,10 +18,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+import baza
 import kampanie as k
 
 BAZA = Path(os.environ.get("BAZA", "/data/baza.json"))
 ONLINE = os.environ.get("ONLINE", "1") == "1"  # RDAP ages of landing domains; 0 = nothing leaves the container
+KOLEKTOR = Path(os.environ.get("KOLEKTOR", "/verdicts/verdicts.db"))  # the collector's verdicts, mounted read-only
 STATIC = Path(__file__).with_name("static")
 MAX_UPLOAD = 2_000_000_000  # a whole incident set with its videos; the body goes to disk, never to memory
 MAX_UNZIP, MAX_FILES = 3_000_000_000, 20_000  # a ZIP bomb stops here
@@ -194,6 +196,33 @@ def ingest(form: dict, entries: list[tuple[str, Path]], work_dir: Path, keep: bo
     return out
 
 
+def run_import(limit: int | None):
+    """The collector's blocked domains join the base: each one with its ad, page, links, servers and IDs."""
+    try:
+        with work:
+            found = baza.read(str(KOLEKTOR), limit=limit)
+            taken = set(state["base"].by_id)
+            new = [m for _, m in found if m.id not in taken]
+            state["status"] = f"Grupuję {len(taken) + len(new)} materiałów w kampanie"
+            commit(state["base"].materials + new)
+            state["error"] = ""
+    except Exception as err:
+        state["error"] = f"Nie udało się wczytać bazy kolektora: {err.__class__.__name__}: {err}"
+    finally:
+        state["status"] = ""
+
+
+def known(dom: str):
+    """The material of a reported domain already in the base, and what was decided about it."""
+    m = next((m for m in state["base"].materials if m.id == dom or dom in m.landing), None)
+    if not m:
+        return None, ""
+    decision = next((s for s in m.sources if s.startswith("decyzja w bazie")), "")
+    return m, (f"Domena {dom} jest już w bazie. "
+               + (decision.replace("decyzja w bazie: block", "Kolektor ją zablokował").rstrip(". ") + "." if decision
+                  else "Zgłoszono ją lub wgrano wcześniej.") + " Poniżej jej werdykt i kampania.")
+
+
 def run_batch(form, entries, work_dir):
     try:
         with work:
@@ -226,13 +255,13 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
             f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
-<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=2">
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=3">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
 <script src="/static/app.js?v=2" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
 <header class="wrap top"><a class="mark" href="/"><i></i>grannyInternet <span>/ kampanie</span></a>
 <nav aria-label="Główna">{nav("/#kampanie", "Kampanie", "k")}{nav("/#materialy", "Materiały", "m")}{nav("/graf", "Graf powiązań", "g")}
-{nav("/eksport.json", "Eksport JSON", "x")}<a class="nav-cta" href="/#dodaj">Dodaj materiał</a></nav></header>
+{nav("/eksport.json", "Eksport JSON", "x")}<a class="nav-cta" href="/#zglos">Zgłoś domenę</a></nav></header>
 <main id="tresc">{body}</main>
 <footer class="foot"><div class="wrap"><div class="foot-row"><a class="mark" href="/"><i></i>grannyInternet</a>
 <span>Wynik to wstępna ocena z przesłankami, nie wyrok. Decyzję podejmuje człowiek.</span></div>
@@ -271,6 +300,22 @@ def campaign_of(campaigns) -> dict:
     return {mid: c for c in campaigns for mid in c["members"]}
 
 
+REPORT = """<section class="sec" id="zglos" aria-labelledby="zglos-t"><div class="wrap">
+<div class="sec-head"><h2 id="zglos-t">Zgłoś podejrzaną domenę</h2><p>Wystarczy domena albo adres strony z reklamy. Jeśli
+domena już jest w bazie, zobaczysz jej decyzję i to, kto ją podjął. Nowa dostaje wstępny werdykt i miejsce w kampanii.</p></div>
+<form class="report" method="post" action="/zglos">
+<label class="field"><span>Domena</span><input type="text" name="domena" required maxlength="2000" placeholder="np. oferta-dnia.top"
+inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+<label class="field"><span>Co wzbudziło podejrzenie (opcjonalnie)</span><input type="text" name="uwaga" maxlength="4000"
+placeholder="Np. obiecany cudowny lek, znana osoba w reklamie" autocomplete="off"></label>
+<button class="btn btn-ink">Zgłoś domenę <span aria-hidden="true">→</span></button></form>{collector}</div></section>"""
+
+COLLECTOR = """<form class="pull" method="post" action="/kolektor"><p><b>Baza kolektora jest podłączona.</b> Wczytaj domeny,
+które kolektor zablokował, z reklamą, stroną, serwerami i identyfikatorami. Każda pokaże swoją decyzję: reguła, model albo człowiek.</p>
+<label class="field"><span>Ile najnowszych</span><select name="ile"><option value="300">300</option><option value="1000">1000</option>
+<option value="0">wszystkie (kilka minut)</option></select></label>
+<button class="btn btn-line">Wczytaj zablokowane domeny</button></form>"""
+
 FORM = """<section class="sec" id="dodaj" aria-labelledby="dodaj-t"><div class="wrap">
 <div class="sec-head"><h2 id="dodaj-t">Dodaj materiał</h2><p>Pliki jednego incydentu dają jeden materiał. Folder albo ZIP
 z podfolderami daje tyle materiałów, ile jest podfolderów. Czytamy zrzuty ekranu (OCR), zapisane strony (.html, .mhtml),
@@ -302,7 +347,7 @@ def index() -> bytes:
 wstępny werdykt, a potem trafia do kampanii albo zostaje nowym wzorcem. Przy każdym powiązaniu widać, na jakiej podstawie.</p>
 {error}<dl class="stats"><div><dt>Materiały</dt><dd>{len(ms)}</dd></div><div><dt>Kampanie</dt><dd>{len(many)}</dd></div>
 <div class="hot"><dt>Wysokie ryzyko</dt><dd>{high}</dd></div><div><dt>Nowe wzorce</dt><dd>{lone}</dd></div></dl></section>"""
-    form = FORM.format(online="Adresy stron i wiek domen (RDAP) sprawdzamy w sieci. Pliki nie opuszczają kontenera."
+    form = REPORT.format(collector=COLLECTOR if KOLEKTOR.is_file() else "") + FORM.format(online="Adresy stron i wiek domen (RDAP) sprawdzamy w sieci. Pliki nie opuszczają kontenera."
                        if ONLINE else "Tryb offline: nic nie opuszcza kontenera, adres strony jest tylko zapisany.")
     cards = []
     for c in many:
@@ -366,8 +411,9 @@ def material(m, placed=None, base=None, note="") -> bytes:
                  f'<p>Najsilniejsze powiązanie z kampanią {num(top)}, średnio {num(avg)}.</p>')
     else:
         best = max(placed["fit"].items(), key=lambda x: x[1][1], default=None)
-        where = (f'<span class="place-id new">Nowy wzorzec</span><p>Żadne powiązanie nie sięga {num(k.LINK)}.'
-                 + (f" Najbliżej jest {e(best[0])} ({num(best[1][1])})." if best else "") + "</p>")
+        where = (f'<span class="place-id new">Nowy wzorzec</span><p>Żadne powiązanie z twardą przesłanką nie sięga '
+                 f'{num(k.LINK)}.' + (f" Najbliżej jest {e(best[0])} ({num(best[1][1])})." if best and best[1][1] > 0
+                                      else " Same poszlaki (narracja, serwer, temat) nie tworzą kampanii.") + "</p>")
     gaps = "".join(f"<li>{e(x)}</li>" for x in m.missing)
     gaps = (f'<h2 style="margin-top:28px">Czego zabrakło</h2><ul class="gaps">{gaps}</ul><p class="hint" style="margin-top:10px">'
             f'Brak danych nie obniża wyniku: to brak przesłanki, nie przesłanka przeciw.</p>') if gaps else \
@@ -508,6 +554,25 @@ class Handler(BaseHTTPRequestHandler):
                 with work:
                     commit([])
                 return self.go("/")
+            if self.path == "/kolektor":
+                if not KOLEKTOR.is_file():
+                    return self.send(page("Brak", '<section class="wrap hero"><h1>Baza kolektora nie jest podłączona.</h1></section>'), code=404)
+                state["status"] = "Wczytuję zablokowane domeny z kolektora"  # before the redirect, so the page refreshes
+                threading.Thread(target=run_import, args=(int(form.get("ile") or 0) or None,), daemon=True).start()
+                return self.go("/#kampanie")
+            if self.path == "/zglos":
+                raw = form.get("domena", "").strip()
+                dom = k.domain_of(k.host_of(raw if "://" in raw else "https://" + raw))
+                if not dom:
+                    return self.send(page("Zła domena", '<section class="wrap hero"><h1>To nie wygląda na domenę.</h1>'
+                                                       '<p class="lead"><a href="/#zglos">Wróć do formularza</a></p></section>'), code=400)
+                with work:
+                    m, note = known(dom)
+                    if m:
+                        return self.send(material(m, note=e(note)))
+                    m = ingest({"url": f"https://{dom}/", "tekst": form.get("uwaga", "")}, [], work_dir, keep=True)[0]
+                    state["status"] = ""
+                return self.go(f"/m/{quote(m.id)}?nowy=1")
             if self.path != "/analizuj":
                 return self.send(page("Brak", '<section class="wrap hero"><h1>Nie ma takiej strony.</h1></section>'), code=404)
             entries = expand(files, spool) if files else []
