@@ -12,11 +12,14 @@ import shutil
 import tempfile
 import textwrap
 import threading
+import urllib.error
+import urllib.request
 import zipfile
+from collections import deque
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 import baza
 import kampanie as k
@@ -27,8 +30,19 @@ KOLEKTOR = Path(os.environ.get("KOLEKTOR", "/verdicts/verdicts.db"))  # the coll
 STATIC = Path(__file__).with_name("static")
 MAX_UPLOAD = 2_000_000_000  # a whole incident set with its videos; the body goes to disk, never to memory
 MAX_UNZIP, MAX_FILES = 3_000_000_000, 20_000  # a ZIP bomb stops here
+MAX_IMPORT = int(os.environ.get("MAX_IMPORT", "0"))  # 0 = all; a server caps it: 5484 domains took 3 GB and 8 min
+PANEL = os.environ.get("PANEL", "")  # the auditors' /api/suspect inside the server's network; empty = reports stay here
+PANEL_HOST = os.environ.get("PANEL_HOST", "")  # the name the panel answers publicly: its Turnstile and rate limit apply
+TURNSTILE_SITE = os.environ.get("TURNSTILE_SITE", "")
+AUDITORS = {"ok": "Zgłoszenie trafiło też do audytorów.",
+            "limit": "Do audytorów nie dotarło: za dużo zgłoszeń z tego adresu, spróbuj za godzinę.",
+            "czlowiek": "Do audytorów nie dotarło: nie udało się potwierdzić, że to człowiek. Odśwież stronę i zgłoś ponownie.",
+            "blad": "Do audytorów nie dotarło: panel nie odpowiada."}
+SAVED = "Zapisano w bazie. Kampanie przeliczają się w tle: za kilka minut materiał będzie w tabeli i na grafie."
 work = threading.Lock()  # one writer at a time: uploads and deletes
 state = {"base": k.Base([]), "campaigns": [], "status": "", "error": ""}
+pending = deque()  # materials waiting to join the base: grouping ~2000 again takes minutes on the server
+PER_CAMPS, PER_ROWS, PER_GRAPH = 20, 50, 12  # one page of each list: all of them at once were 1.5 MB and 18 s
 
 
 def save(materials):
@@ -43,6 +57,36 @@ def commit(materials):
     base = k.Base(materials)
     state.update(base=base, campaigns=base.campaigns())
     save(materials)
+
+
+def regroup():
+    """Adds the waiting materials and groups once for all of them, outside any request: Cloudflare gives up at 100 s."""
+    with work:
+        while pending:
+            new, ids = [], set(state["base"].by_id)
+            while pending:
+                m = pending.popleft()
+                if m.id not in ids:
+                    new.append(m)
+                    ids.add(m.id)
+            if new:
+                commit(state["base"].materials + new)
+        state["status"] = ""
+
+
+def add_later(m):
+    pending.append(m)
+    state["status"] = "Przeliczam kampanie z nowymi materiałami"
+    threading.Thread(target=regroup, daemon=True).start()
+
+
+def drop_later(mid):
+    def run():
+        with work:
+            commit([m for m in state["base"].materials if m.id != mid])
+            state["status"] = ""
+    state["status"] = "Usuwam materiał i przeliczam kampanie"
+    threading.Thread(target=run, daemon=True).start()
 
 
 def load():
@@ -174,7 +218,7 @@ def ingest(form: dict, entries: list[tuple[str, Path]], work_dir: Path, keep: bo
     """Analyse every group into a material; with `keep` each one joins the base as soon as it is read."""
     one = bool(form.get("url", "").strip() or form.get("tekst", "").strip())
     groups = group(entries, one)
-    taken = set(state["base"].by_id)
+    taken = set(state["base"].by_id) | {m.id for m in pending}
     out, failed = [], []
     for i, (name, files) in enumerate(groups):
         label = name or (urlsplit(form["url"].strip()).netloc if form.get("url", "").strip() else "") \
@@ -212,9 +256,26 @@ def run_import(limit: int | None):
         state["status"] = ""
 
 
+def to_auditors(dom: str, note: str, token: str, ip: str) -> str:
+    """The report on to the auditors' panel, as its own form sends it: the panel checks Turnstile and its limit per IP.
+    A key of AUDITORS, or "" when no panel is set."""
+    if not PANEL:
+        return ""
+    req = urllib.request.Request(PANEL, json.dumps({"url": dom, "note": note[:500], "cf-turnstile-response": token}).encode(),
+                                 headers={"Content-Type": "application/json", "X-Panel": "1", "Host": PANEL_HOST,
+                                          "Cf-Connecting-Ip": ip})
+    try:
+        with urllib.request.urlopen(req, timeout=20):
+            return "ok"
+    except urllib.error.HTTPError as err:
+        return {429: "limit", 403: "czlowiek"}.get(err.code, "blad")
+    except OSError:
+        return "blad"
+
+
 def known(dom: str):
     """The material of a reported domain already in the base, and what was decided about it."""
-    m = next((m for m in state["base"].materials if m.id == dom or dom in m.landing), None)
+    m = next((m for m in [*state["base"].materials, *pending] if m.id == dom or dom in m.landing), None)
     if not m:
         return None, ""
     decision = next((s for s in m.sources if s.startswith("decyzja w bazie")), "")
@@ -244,6 +305,30 @@ def many_of(n: int) -> str:
     return f"{n} " + ("materiał" if n == 1 else "materiały" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "materiałów")
 
 
+def page_no(query, key: str, total: int, per: int) -> tuple[int, int]:
+    """The page asked for in ?key= (clamped) and the last page."""
+    last = max(1, math.ceil(total / per))
+    n = (query or {}).get(key, ["1"])[0]
+    return min(max(int(n) if n.isdigit() else 1, 1), last), last
+
+
+def pager(query, key: str, n: int, last: int, where: str, anchor: str = "") -> str:
+    if last == 1:
+        return ""
+    def go(i):  # the other list keeps its page
+        q = {x: v[0] for x, v in (query or {}).items() if x in ("k", "s")} | {key: str(i)}
+        return e(f"{where}?{urlencode(q)}{anchor}")
+    prev = f'<a class="btn btn-line btn-sm" href="{go(n - 1)}" rel="prev">← Poprzednie</a>' if n > 1 else ""
+    nxt = f'<a class="btn btn-line btn-sm" href="{go(n + 1)}" rel="next">Następne →</a>' if n < last else ""
+    return f'<nav class="pager" aria-label="Strony">{prev}<span>Strona {n} z {last}</span>{nxt}</nav>'
+
+
+def camp_href(cid: str) -> str:
+    """A campaign's link: the page of the list it is on."""
+    ids = [c["id"] for c in state["campaigns"] if len(c["members"]) > 1]
+    return f"/?k={ids.index(cid) // PER_CAMPS + 1 if cid in ids else 1}#{e(cid)}"
+
+
 def num(x: float) -> str:
     return f"{x:.2f}".replace(".", ",")
 
@@ -255,7 +340,7 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
             f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
-<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=3">
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=4">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
 <script src="/static/app.js?v=2" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
@@ -307,8 +392,11 @@ domena już jest w bazie, zobaczysz jej decyzję i to, kto ją podjął. Nowa do
 <label class="field"><span>Domena</span><input type="text" name="domena" required maxlength="2000" placeholder="np. oferta-dnia.top"
 inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
 <label class="field"><span>Co wzbudziło podejrzenie (opcjonalnie)</span><input type="text" name="uwaga" maxlength="4000"
-placeholder="Np. obiecany cudowny lek, znana osoba w reklamie" autocomplete="off"></label>
+placeholder="Np. obiecany cudowny lek, znana osoba w reklamie" autocomplete="off"></label>{turnstile}
 <button class="btn btn-ink">Zgłoś domenę <span aria-hidden="true">→</span></button></form>{collector}</div></section>"""
+
+TURNSTILE = ('<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'  # the panel checks it
+             '<div class="cf-turnstile" data-sitekey="{}" data-language="pl"></div>')
 
 COLLECTOR = """<form class="pull" method="post" action="/kolektor"><p><b>Baza kolektora jest podłączona.</b> Wczytaj domeny,
 które kolektor zablokował, z reklamą, stroną, serwerami i identyfikatorami. Każda pokaże swoją decyzję: reguła, model albo człowiek.</p>
@@ -333,12 +421,16 @@ aria-label="Folder z materiałami"></label></div></div>
 <p class="hint">{online}</p></div></form></div></section>"""
 
 
-def index() -> bytes:
+def index(query=None) -> bytes:
     base, campaigns = state["base"], state["campaigns"]
     ms = base.materials
     many = [c for c in campaigns if len(c["members"]) > 1]
+    kn, klast = page_no(query, "k", len(many), PER_CAMPS)
+    sn, slast = page_no(query, "s", len(ms), PER_ROWS)
     where = campaign_of(campaigns)
-    high = sum(1 for m in ms if k.verdict(m)[1] >= 4)
+    if state.get("high", (None,))[0] is not base:  # verdicts of ~2000 took 3 s on each visit: once per base
+        state["high"] = (base, sum(1 for m in ms if k.verdict(m)[1] >= 4))
+    high = state["high"][1]
     lone = len(ms) - sum(len(c["members"]) for c in many)
     error = f'<div class="notice" role="alert">{e(state["error"])}</div>' if state["error"] else ""
     hero = f"""<section class="wrap hero"><p class="eyebrow">Kolekcjoner fejków · demonstrator</p>
@@ -347,10 +439,10 @@ def index() -> bytes:
 wstępny werdykt, a potem trafia do kampanii albo zostaje nowym wzorcem. Przy każdym powiązaniu widać, na jakiej podstawie.</p>
 {error}<dl class="stats"><div><dt>Materiały</dt><dd>{len(ms)}</dd></div><div><dt>Kampanie</dt><dd>{len(many)}</dd></div>
 <div class="hot"><dt>Wysokie ryzyko</dt><dd>{high}</dd></div><div><dt>Nowe wzorce</dt><dd>{lone}</dd></div></dl></section>"""
-    form = REPORT.format(collector=COLLECTOR if KOLEKTOR.is_file() else "") + FORM.format(online="Adresy stron i wiek domen (RDAP) sprawdzamy w sieci. Pliki nie opuszczają kontenera."
+    form = REPORT.format(collector=COLLECTOR if KOLEKTOR.is_file() else "", turnstile=TURNSTILE.format(e(TURNSTILE_SITE)) if TURNSTILE_SITE else "") + FORM.format(online="Adresy stron i wiek domen (RDAP) sprawdzamy w sieci. Pliki nie opuszczają kontenera."
                        if ONLINE else "Tryb offline: nic nie opuszcza kontenera, adres strony jest tylko zapisany.")
     cards = []
-    for c in many:
+    for c in many[(kn - 1) * PER_CAMPS:kn * PER_CAMPS]:
         dups = ", ".join(f"{a} = {b}" for a, b in c["duplicates"])
         pairs = "".join(pair(s, f"{mlink(a, '')} ~ {mlink(b, '')}", ev[:3]) for s, a, b, ev in c["pairs"][:4])
         cards.append(f"""<article class="camp" id="{e(c['id'])}"><div class="camp-side"><span class="camp-id">{e(c['id'])}</span>
@@ -363,17 +455,19 @@ wstępny werdykt, a potem trafia do kampanii albo zostaje nowym wzorcem. Przy ka
     if not ms:
         camps = '<p class="lead muted">Baza jest pusta. Dodaj pierwsze materiały w formularzu wyżej.</p>'
     else:
-        camps = "".join(cards) or '<p class="lead muted">Żadne dwa materiały nie mają jeszcze powiązania ≥ 0,5.</p>'
+        camps = ("".join(cards) + pager(query, "k", kn, klast, "/", "#kampanie")
+                 or '<p class="lead muted">Żadne dwa materiały nie mają jeszcze powiązania ≥ 0,5.</p>')
     rows = []
-    for m in ms:
+    for m in ms[(sn - 1) * PER_ROWS:sn * PER_ROWS]:
         c = where.get(m.id)
-        camp = (f'<a href="/#{e(c["id"])}">{e(c["id"])}</a>' if c and len(c["members"]) > 1
+        camp = (f'<a href="{camp_href(c["id"])}">{e(c["id"])}</a>' if c and len(c["members"]) > 1
                 else '<span class="muted">nowy wzorzec</span>')
         rows.append(f"""<tr><td class="id">{mlink(m.id, '')}<small>{e(m.name) if m.name != m.id else ''}</small></td>
 <td>{stamp(m)}</td><td>{camp}</td><td>{chips(m.landing[:3])}</td><td>{chips(m.persons + m.claimed)}</td>
 <td>{chips(m.topics)}</td><td class="num">{len(m.missing) or '–'}</td></tr>""")
     table = (f"""<div class="table"><table><thead><tr><th>Materiał</th><th>Wstępny werdykt</th><th>Kampania</th>
-<th>Domena strony</th><th>Osoby i marki</th><th>Temat</th><th>Braki danych</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>"""
+<th>Domena strony</th><th>Osoby i marki</th><th>Temat</th><th>Braki danych</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
+{pager(query, "s", sn, slast, "/", "#materialy")}"""
              if ms else '<p class="lead muted">Nic tu jeszcze nie ma.</p>')
     clear = ('<form class="rm" method="post" action="/wyczysc" data-confirm="Usunąć wszystkie materiały z bazy?">'
              '<button class="btn btn-line btn-sm">Wyczyść bazę</button></form>') if ms else ""
@@ -407,7 +501,7 @@ def material(m, placed=None, base=None, note="") -> bytes:
     placed = placed or base.place(m, state["campaigns"])
     if placed["campaign"]:
         avg, top = placed["fit"][placed["campaign"]]
-        where = (f'<a class="place-id" href="/#{e(placed["campaign"])}">{e(placed["campaign"])}</a>'
+        where = (f'<a class="place-id" href="{camp_href(placed["campaign"])}">{e(placed["campaign"])}</a>'
                  f'<p>Najsilniejsze powiązanie z kampanią {num(top)}, średnio {num(avg)}.</p>')
     else:
         best = max(placed["fit"].items(), key=lambda x: x[1][1], default=None)
@@ -437,8 +531,10 @@ i ich siłą. Przesłanki składają się jak niezależne poszlaki: 1 − ∏(1 
 strony i tekstu. Z tych cech biorą się przesłanki.</p></div>{features(m)}{remove}</div></section>""")
 
 
-def graph() -> bytes:
-    base, campaigns = state["base"], state["campaigns"]
+def graph(query=None) -> bytes:
+    base = state["base"]
+    gn, glast = page_no(query, "g", len(state["campaigns"]), PER_GRAPH)
+    campaigns = state["campaigns"][(gn - 1) * PER_GRAPH:gn * PER_GRAPH]  # biggest first
     cols = max(1, math.ceil(math.sqrt(len(campaigns))))
     cell, pos, parts = 280, {}, []
     for i, c in enumerate(campaigns):
@@ -450,13 +546,13 @@ def graph() -> bytes:
         for j, mid in enumerate(c["members"]):
             a = 2 * math.pi * j / len(c["members"]) - math.pi / 2
             pos[mid] = (cx + r * math.cos(a), cy + r * math.sin(a))
-    lines, ms = [], base.materials
-    for i in range(len(ms)):
-        for j in range(i + 1, len(ms)):
-            s, ev = base.compare(ms[i], ms[j])
-            if s >= k.FAMILY and ms[i].id in pos and ms[j].id in pos:
-                (x1, y1), (x2, y2) = pos[ms[i].id], pos[ms[j].id]
-                why = f"{ms[i].id} ~ {ms[j].id}: {num(s)}\n" + "\n".join(w for _, _, w in ev[:4])
+    lines, ms = [], [base.by_id[x] for c in campaigns for x in c["members"] if x in base.by_id]
+    # pairs scored when grouping, strongest first; a campaign of 101 drew 5050 lines: 2 MB and 6 s
+    for c in campaigns:
+        for s, a, b, ev in [p for p in c["pairs"] if p[0] >= k.FAMILY][:3 * len(c["members"])]:
+            if a in pos and b in pos:
+                (x1, y1), (x2, y2) = pos[a], pos[b]
+                why = f"{a} ~ {b}: {num(s)}\n" + "\n".join(w for _, _, w in ev[:4])
                 lines.append(f'<line class="g-line" x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
                              f'stroke-width="{1 + 5 * s:.1f}" opacity="{0.2 + 0.6 * s:.2f}"><title>{e(why)}</title></line>')
     nodes = []
@@ -470,10 +566,11 @@ def graph() -> bytes:
                          f'text-anchor="middle">{e(m.id[:4])}</text></a>')
     rows = max(1, math.ceil(len(campaigns) / cols))
     svg = (f'<svg viewBox="0 0 {cols * cell} {rows * cell + 20}" role="img" aria-label="Graf powiązań materiałów">'
-           f'{"".join(parts)}{"".join(lines)}{"".join(nodes)}</svg>') if ms else '<p class="muted">Baza jest pusta.</p>'
+           f'{"".join(parts)}{"".join(lines)}{"".join(nodes)}</svg>'
+           f'{pager(query, "g", gn, glast, "/graf")}') if ms else '<p class="muted">Baza jest pusta.</p>'
     return page("Graf powiązań", f"""<section class="wrap hero"><p class="eyebrow">Graf powiązań</p>
-<h1>Kto z kim <span>i dlaczego.</span></h1><p class="lead">Okrąg to kampania. Linia łączy parę o podobieństwie
-≥ {num(k.FAMILY)}: im grubsza, tym silniejsza. Najedź na linię, żeby zobaczyć przesłanki, kliknij materiał, żeby go otworzyć.</p></section>
+<h1>Kto z kim <span>i dlaczego.</span></h1><p class="lead">Okrąg to kampania, od największych. Linia łączy
+parę z jednej kampanii o podobieństwie ≥ {num(k.FAMILY)} (w dużych kampaniach tylko najsilniejsze): im grubsza, tym silniejsza. Najedź na linię, żeby zobaczyć przesłanki, kliknij materiał, żeby go otworzyć.</p></section>
 <section class="wrap"><div class="graph">{svg}</div><ul class="legend"><li><i class="hi"></i>wysokie ryzyko</li>
 <li><i></i>podejrzane</li><li><i class="ok"></i>brak sygnałów</li><li><i class="ln"></i>powiązanie</li></ul></section>""", "g")
 
@@ -496,8 +593,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        cf = " https://challenges.cloudflare.com" if TURNSTILE_SITE else ""  # Turnstile's script and its frame
         self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; "
-                         "script-src 'self'; font-src 'self'; img-src data:; connect-src 'self'; form-action 'self'")
+                         f"script-src 'self'{cf}; frame-src {cf.strip() or repr('none')}; font-src 'self'; "
+                         "img-src data:; connect-src 'self'; form-action 'self'")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Cache-Control", "max-age=3600" if cache else "no-store")
         self.end_headers()
@@ -511,17 +610,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = unquote(urlsplit(self.path).path)
+        query = parse_qs(urlsplit(self.path).query)
         if path == "/":
-            return self.send(index())
+            return self.send(index(query))
         if path == "/graf":
-            return self.send(graph())
+            return self.send(graph(query))
         if path == "/eksport.json":
             return self.send(export(), "application/json; charset=utf-8")
         if path.startswith("/static/") and (f := STATIC / clean(path[8:])).is_file() and f.suffix in TYPES:
             return self.send(f.read_bytes(), TYPES[f.suffix], cache=True)
-        if path.startswith("/m/") and (m := state["base"].by_id.get(path[3:])):
-            new = "nowy" in parse_qs(urlsplit(self.path).query)
-            return self.send(material(m, note="Zapisano w bazie. Kampanie są przeliczone." if new else ""))
+        if path.startswith("/m/") and (m := state["base"].by_id.get(path[3:])
+                                       or next((x for x in pending if x.id == path[3:]), None)):
+            return self.send(material(m))
         self.send(page("Brak", '<section class="wrap hero"><h1>Nie ma takiej strony.</h1></section>'), code=404)
 
     def do_POST(self):
@@ -547,8 +647,7 @@ class Handler(BaseHTTPRequestHandler):
                 files = []
             body.unlink()
             if self.path == "/usun":
-                with work:
-                    commit([m for m in state["base"].materials if m.id != form.get("id")])
+                drop_later(form.get("id"))
                 return self.go("/#materialy")
             if self.path == "/wyczysc":
                 with work:
@@ -558,7 +657,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not KOLEKTOR.is_file():
                     return self.send(page("Brak", '<section class="wrap hero"><h1>Baza kolektora nie jest podłączona.</h1></section>'), code=404)
                 state["status"] = "Wczytuję zablokowane domeny z kolektora"  # before the redirect, so the page refreshes
-                threading.Thread(target=run_import, args=(int(form.get("ile") or 0) or None,), daemon=True).start()
+                threading.Thread(target=run_import, args=(min(int(form.get("ile") or 0) or MAX_IMPORT, MAX_IMPORT) if MAX_IMPORT else int(form.get("ile") or 0) or None,), daemon=True).start()
                 return self.go("/#kampanie")
             if self.path == "/zglos":
                 raw = form.get("domena", "").strip()
@@ -566,13 +665,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not dom:
                     return self.send(page("Zła domena", '<section class="wrap hero"><h1>To nie wygląda na domenę.</h1>'
                                                        '<p class="lead"><a href="/#zglos">Wróć do formularza</a></p></section>'), code=400)
-                with work:
-                    m, note = known(dom)
-                    if m:
-                        return self.send(material(m, note=e(note)))
-                    m = ingest({"url": f"https://{dom}/", "tekst": form.get("uwaga", "")}, [], work_dir, keep=True)[0]
-                    state["status"] = ""
-                return self.go(f"/m/{quote(m.id)}?nowy=1")
+                sent = to_auditors(dom, form.get("uwaga", ""), form.get("cf-turnstile-response", ""),
+                                   self.headers.get("Cf-Connecting-Ip", ""))
+                m, note = known(dom)
+                if not m:
+                    m = ingest({"url": f"https://{dom}/", "tekst": form.get("uwaga", "")}, [], work_dir, keep=False)[0]
+                    add_later(m)
+                    note = SAVED
+                return self.send(material(m, note=e(" ".join(filter(None, (note, AUDITORS.get(sent)))))))
             if self.path != "/analizuj":
                 return self.send(page("Brak", '<section class="wrap hero"><h1>Nie ma takiej strony.</h1></section>'), code=404)
             entries = expand(files, spool) if files else []
@@ -586,14 +686,13 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=run_batch, args=(form, entries, work_dir), daemon=True).start()
                 work_dir = None
                 return self.go("/#kampanie")
-            with work:
-                m = ingest(form, entries, work_dir, keep)[0]
-                state["status"] = ""
-                if keep:
-                    return self.go(f"/m/{quote(m.id)}?nowy=1")
-                base = k.Base(state["base"].materials + [m])
-                return self.send(material(m, base.place(m, base.campaigns()), base,
-                                          "Tego materiału nie zapisano w bazie. Pokazujemy, gdzie by pasował."))
+            m = ingest(form, entries, work_dir, keep=False)[0]
+            state["status"] = ""
+            if keep:
+                add_later(m)
+            # shortcut: placed against the base without it, so its narration (TF-IDF) does not count; enough to place one
+            return self.send(material(m, note=SAVED if keep else
+                                      "Tego materiału nie zapisano w bazie. Pokazujemy, gdzie by pasował."))
         except Exception as err:
             state["status"] = ""
             self.send(page("Błąd", f'<section class="wrap hero"><h1>Nie udało się przeanalizować.</h1>'

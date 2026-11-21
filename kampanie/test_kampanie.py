@@ -202,5 +202,18 @@ class Collector(unittest.TestCase):
         self.assertTrue(k.on_cdn("188.114.96.3") and not k.on_cdn("203.0.113.5"))
 
 
+class Paging(unittest.TestCase):
+    def test_page_numbers_and_links(self):
+        import app
+        self.assertEqual(app.page_no({"k": ["9"]}, "k", 45, 20), (3, 3))  # past the end: the last page
+        self.assertEqual(app.page_no({"k": ["x"]}, "k", 45, 20), (1, 3))  # junk: the first
+        self.assertEqual(app.page_no({}, "k", 0, 20), (1, 1))
+        self.assertEqual(app.pager({}, "k", 1, 1, "/"), "")
+        nav = app.pager({"s": ["2"], "zle": ["<x>"]}, "k", 2, 3, "/", "#kampanie")
+        self.assertIn('href="/?s=2&amp;k=1#kampanie"', nav)  # the other list keeps its page, nothing else passes
+        self.assertIn('href="/?s=2&amp;k=3#kampanie"', nav)
+        self.assertNotIn("zle", nav)
+
+
 if __name__ == "__main__":
     unittest.main()

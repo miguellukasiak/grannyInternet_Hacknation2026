@@ -224,3 +224,5 @@ tr.lone td.id { color: var(--ink-2); }
 .foot-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px 32px; font-size: 15px; color: var(--ink-2); }
 .foot-row form { margin: 0; }
 .foot p { max-width: 60em; font-size: 14px; color: var(--ink-2); margin-top: 20px; }
+.pager { display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; margin-top: 20px; }
+.pager span { color: var(--ink-2, inherit); font-size: 15px; }
