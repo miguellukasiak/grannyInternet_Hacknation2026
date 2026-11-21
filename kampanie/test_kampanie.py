@@ -213,6 +213,11 @@ class Paging(unittest.TestCase):
         self.assertIn('href="/?s=2&amp;k=1#kampanie"', nav)  # the other list keeps its page, nothing else passes
         self.assertIn('href="/?s=2&amp;k=3#kampanie"', nav)
         self.assertNotIn("zle", nav)
+        many = app.chips([f"d{i}.pl" for i in range(8)])
+        self.assertIn("Pokaż jeszcze 3", many)
+        self.assertEqual(many.split("<details")[0].count("chip"), 6)  # the list's own class and the first five
+        self.assertNotIn("<details", app.chips(["a.pl", "b.pl"]))
+
 
 
 if __name__ == "__main__":

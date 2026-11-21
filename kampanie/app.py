@@ -340,7 +340,7 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
             f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
-<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=4">
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=5">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
 <script src="/static/app.js?v=2" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
@@ -359,10 +359,23 @@ def mlink(mid: str, cls="chip") -> str:
     return f'<a class="{cls}" href="/m/{quote(mid)}">{e(mid)}</a>'
 
 
+FIRST = 5  # chips shown before "więcej": a campaign of 101 filled a screen
+
+
+def fold(parts: list[str]) -> str:
+    """The first chips, the rest behind a native disclosure (no script)."""
+    head = f'<div class="chips">{"".join(parts[:FIRST])}</div>'
+    if len(parts) <= FIRST:
+        return head
+    return (f'{head}<details class="more"><summary>Pokaż jeszcze {len(parts) - FIRST}</summary>'
+            f'<div class="chips">{"".join(parts[FIRST:])}</div></details>')
+
+
 def chips(items, cls="chip") -> str:
     items = [x for x in items if x]
-    return (f'<div class="chips">{"".join(f"<span class={chr(34)}{cls}{chr(34)}>{e(str(x))}</span>" for x in items)}</div>'
-            if items else '<span class="none">brak</span>')
+    return fold([f'<span class="{cls}">{e(str(x))}</span>' for x in items]) if items else '<span class="none">brak</span>'
+
+
 
 
 def stamp(m, big=False) -> str:
@@ -447,7 +460,7 @@ wstępny werdykt, a potem trafia do kampanii albo zostaje nowym wzorcem. Przy ka
         pairs = "".join(pair(s, f"{mlink(a, '')} ~ {mlink(b, '')}", ev[:3]) for s, a, b, ev in c["pairs"][:4])
         cards.append(f"""<article class="camp" id="{e(c['id'])}"><div class="camp-side"><span class="camp-id">{e(c['id'])}</span>
 <h3>{e(c['label'])}</h3><p>{many_of(len(c['members']))} · rodzina {e(c['family'])}</p></div>
-<div class="camp-main"><dl class="facts"><div><dt>Materiały</dt><dd><div class="chips">{''.join(mlink(x) for x in c['members'])}</div></dd></div>
+<div class="camp-main"><dl class="facts"><div><dt>Materiały</dt><dd>{fold([mlink(x) for x in c['members']])}</dd></div>
 <div><dt>Łączy je</dt><dd>{chips(c['linked_by'], 'chip sig')}</dd></div>
 <div class="wide"><dt>Domeny stron</dt><dd>{chips(c['domains'])}</dd></div>
 {f'<div class="wide"><dt>Duplikaty</dt><dd>{chips(dups.split(", "))}</dd></div>' if dups else ''}</dl>
@@ -490,7 +503,8 @@ def features(m) -> str:
             ("Pola formularzy", chips(m.forms)), ("Obrazy (dHash)", f'<span class="num">{len({n for _, n in m.images})}</span>'),
             ("Inne domeny", chips(m.domains[:25])), ("Pliki strony", chips(m.assets[:20])), ("Przeczytane", chips(m.sources))]
     dl = "".join(f"<div><dt>{a}</dt><dd>{b}</dd></div>" for a, b in rows)
-    text = f'<div class="text">{e(m.text[:3000])}</div>' if m.text else ""
+    text = (f'<details class="more text-more"><summary>Odczytany tekst ({len(m.text)} znaków)</summary>'
+            f'<div class="text">{e(m.text[:3000])}</div></details>') if m.text else ""
     return f'<dl class="feat">{dl}</dl>{text}'
 
 

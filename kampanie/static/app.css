@@ -226,3 +226,9 @@ tr.lone td.id { color: var(--ink-2); }
 .foot p { max-width: 60em; font-size: 14px; color: var(--ink-2); margin-top: 20px; }
 .pager { display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; margin-top: 20px; }
 .pager span { color: var(--ink-2, inherit); font-size: 15px; }
+.more { margin-top: 6px; }
+.more > summary { cursor: pointer; display: inline-block; font-size: 14px; font-weight: 700; color: var(--ink-2); padding: 3px 0;
+  text-decoration: underline; text-underline-offset: 3px; }
+.more > summary:hover { color: var(--ink); }
+.more[open] > summary { margin-bottom: 6px; }
+.text-more { margin-top: 20px; }
