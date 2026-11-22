@@ -407,6 +407,26 @@ class Paging(unittest.TestCase):
             app.commit = saved
             app.pending.clear()
 
+    def test_saved_note_follows_regrouping(self):
+        import app
+        m, old = k.Material(id="n", name="n"), app.state["base"]
+        try:  # the result page used to say "regrouping, up to a minute" for ever
+            app.pending.append(m)
+            self.assertEqual(app.saved_note(m, app.SAVED), (app.SAVED, True))
+            app.pending.clear()
+            self.assertTrue(app.saved_note(m, app.SAVED)[0].startswith("Nie udało się"))
+            app.state["base"] = k.Base([m])
+            self.assertEqual(app.saved_note(m, app.SAVED + " x"), (app.DONE + " x", False))
+            self.assertEqual(app.saved_note(m, "inna"), ("inna", False))
+        finally:
+            app.state["base"] = old
+            app.pending.clear()
+
+    def test_no_rdap_for_an_account_on_a_host(self):
+        m = k.Material(id="c", name="c", landing=["vz-6110f311-389.b-cdn.net"])
+        k.look_up_ages(m)  # no network in the test: a lookup would leave a note
+        self.assertEqual((m.ages, m.missing), ({}, []))
+
     def test_form_answers_with_redirect(self):
         import app, http.client, threading
         from http.server import ThreadingHTTPServer

@@ -46,6 +46,19 @@ AUDITORS = {"ok": "Zgłoszenie trafiło też do audytorów.",
             "blad": "Do audytorów nie dotarło: panel nie odpowiada."}
 SAVED = ("Zapisano w bazie. Kampanie przeliczają się w tle, zwykle do minuty: potem materiał będzie w tabeli i na grafie. "
          "Kolejne materiały możesz dodawać od razu, przeliczą się razem.")
+DONE = "Gotowe: materiał jest w bazie, w tabeli i na grafie, a kampanie są przeliczone."
+FAILED = "Nie udało się dołączyć materiału do kampanii. Baza została bez zmian, spróbuj dodać go jeszcze raz."
+
+
+def saved_note(m, note: str) -> tuple[str, bool]:
+    """A saved material's note as things stand now, and whether its regrouping still runs (the page then refreshes)."""
+    if not note.startswith(SAVED):
+        return note, False
+    if m.id in state["base"].by_id:
+        return DONE + note[len(SAVED):], False
+    if work.locked() or any(x.id == m.id for x in pending):
+        return note, True
+    return FAILED + note[len(SAVED):], False
 work = threading.Lock()  # one writer at a time: uploads and deletes
 state = {"base": k.Base([]), "campaigns": [], "status": "", "error": ""}
 pending = deque()  # materials waiting to join the base: grouping ~2000 again takes minutes on the server
@@ -89,7 +102,8 @@ def idle():
     except Exception:
         traceback.print_exc()  # the old base stays; the materials of this round are not added
     finally:
-        state["status"] = ""
+        if not pending:  # a delete ending while materials wait must not hide that they are still being added
+            state["status"] = ""
 
 
 def add_later(m):
@@ -667,7 +681,7 @@ def features(m) -> str:
     return f'<dl class="feat">{dl}</dl>{text}'
 
 
-def material(m, placed=None, base=None, note="", again="") -> bytes:
+def material(m, placed=None, base=None, note="", again="", wait=False) -> bytes:
     base = base or state["base"]
     flags = "".join(f"<li><b>+{p}</b><span>{e(why)}</span></li>" for p, why in k.flags(m))
     flags = f'<ol class="flags">{flags}</ol>' if flags else '<p class="muted">Nic z cech, które znamy z oszustw.</p>'
@@ -704,7 +718,7 @@ def material(m, placed=None, base=None, note="", again="") -> bytes:
 <section class="sec"><div class="wrap"><div class="sec-head"><h2>Podobne materiały</h2><p>Każde powiązanie z przesłankami
 i ich siłą. Przesłanki składają się jak niezależne poszlaki: 1 − ∏(1 − siła).</p></div>{similar}</div></section>
 <section class="sec"><div class="wrap"><div class="sec-head"><h2>Wyodrębnione cechy</h2><p>To, co odczytaliśmy z plików,
-strony i tekstu. Z tych cech biorą się przesłanki.</p></div>{features(m)}{remove}</div></section>""")
+strony i tekstu. Z tych cech biorą się przesłanki.</p></div>{features(m)}{remove}</div></section>""", refresh=wait)
 
 
 def graph(query=None) -> bytes:
@@ -915,7 +929,8 @@ class Handler(BaseHTTPRequestHandler):
                                        or next((x for x in pending if x.id == path[3:]), None)):
             return self.send(material(m))
         if path.startswith("/wynik/") and (r := results.get(path[7:])):
-            return self.send(material(r[0], note=r[1], again=r[2]))
+            note, wait = saved_note(r[0], r[1])
+            return self.send(material(r[0], note=note, again=r[2], wait=wait))
         if path.startswith("/wynik/"):
             return self.send(page("Wynik wygasł", '<section class="wrap hero"><h1>Ten wynik już wygasł.</h1>'
                                                   '<p class="lead"><a href="/#dodaj">Dodaj materiał jeszcze raz</a></p></section>'), code=404)

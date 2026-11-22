@@ -621,9 +621,13 @@ def finish(m: Material) -> Material:
 
 def look_up_ages(m: Material):
     for dom in m.landing[:4]:
-        if dom not in m.ages:
+        # an account on a host (vz-….b-cdn.net) is not registered on its own: a registry only knows the host's old domain
+        if dom not in m.ages and _ext(dom).top_domain_under_public_suffix == dom:
             try:
                 m.ages[dom] = rdap_age(dom)
+            except urllib.error.HTTPError as e:
+                m.missing.append(f"RDAP {dom}: " + ("rejestr nie zna tej domeny albo nie podaje jej danych (404)"
+                                                    if e.code == 404 else f"rejestr odpowiedział błędem {e.code}"))
             except Exception as e:
                 m.missing.append(f"RDAP {dom}: brak odpowiedzi ({e.__class__.__name__})")
 
