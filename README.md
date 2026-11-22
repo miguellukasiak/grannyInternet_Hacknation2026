@@ -325,7 +325,7 @@ Dane organizatora nie są częścią repozytorium. Wgrywa się je w przeglądarc
 
 Ta część jest potrzebna tylko wtedy, gdy https://kampanie.grannyinternet.me/ nie odpowiada.
 
-**Film z działania systemu**, nagrany, gdy wszystko działało na serwerze: _(link do uzupełnienia)_
+**Film z działania systemu**, nagrany, gdy wszystko działało na serwerze: https://youtu.be/Q_Dz_FCzqKo
 
 ### Sam demonstrator kampanii
 
