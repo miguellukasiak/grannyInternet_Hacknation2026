@@ -215,6 +215,11 @@ class Campaigns(unittest.TestCase):
         self.assertEqual(k.flags(plain), [])
         k.add_text(one := k.Material(id="o", name="o"), "Gotówka przy odbiorze, tylko dziś!")
         self.assertEqual(k.verdict(k.finish(one)), ("słaby sygnał", 1))
+        page = "<html><body>" + "<div><p><a>x</a></p></div>" * 3 + "</body></html>"
+        k.add_html(bare := k.Material(id="b", name="b"), page)
+        self.assertIn("mierzenia ruchu", " ".join(w for _, w in k.flags(bare)))
+        k.add_html(tagged := k.Material(id="g", name="g"), page.replace("</body>", "<script>gtag('config','G-AB12CD34EF')</script></body>"))
+        self.assertNotIn("mierzenia ruchu", " ".join(w for _, w in k.flags(tagged)))
 
     def test_private_url_refused(self):
         with self.assertRaises(ValueError):
@@ -401,6 +406,28 @@ class Paging(unittest.TestCase):
         finally:
             app.commit = saved
             app.pending.clear()
+
+    def test_form_answers_with_redirect(self):
+        import app, http.client, threading
+        from http.server import ThreadingHTTPServer
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:  # Back after a POST must not ask to send the form again
+            c = http.client.HTTPConnection("127.0.0.1", srv.server_port)
+            c.request("POST", "/analizuj", "tekst=Tylko+dzi%C5%9B+cudowny+lek",
+                      {"Content-Type": "application/x-www-form-urlencoded"})
+            r = c.getresponse(); r.read()
+            self.assertEqual(r.status, 303)
+            self.assertTrue(r.getheader("Location").startswith("/wynik/"))
+            c.request("GET", r.getheader("Location")); r2 = c.getresponse()
+            self.assertEqual(r2.status, 200)
+            self.assertIn("nie zapisano", r2.read().decode())
+            c.request("GET", "/wynik/nie-ma"); r3 = c.getresponse(); r3.read()
+            self.assertEqual(r3.status, 404)
+        finally:
+            c.close()
+            srv.shutdown()
+            srv.server_close()
 
 
 if __name__ == "__main__":

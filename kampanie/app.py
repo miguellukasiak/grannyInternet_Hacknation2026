@@ -9,6 +9,7 @@ import math
 import mmap
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import textwrap
@@ -17,7 +18,7 @@ import traceback
 import urllib.error
 import urllib.request
 import zipfile
-from collections import Counter, deque
+from collections import Counter, OrderedDict, deque
 from dataclasses import asdict, fields
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -43,10 +44,12 @@ AUDITORS = {"ok": "Zgłoszenie trafiło też do audytorów.",
             "limit": "Do audytorów nie dotarło: za dużo zgłoszeń z tego adresu, spróbuj za godzinę.",
             "czlowiek": "Do audytorów nie dotarło: nie udało się potwierdzić, że to człowiek. Odśwież stronę i zgłoś ponownie.",
             "blad": "Do audytorów nie dotarło: panel nie odpowiada."}
-SAVED = "Zapisano w bazie. Kampanie przeliczają się w tle: za kilka minut materiał będzie w tabeli i na grafie."
+SAVED = ("Zapisano w bazie. Kampanie przeliczają się w tle, zwykle do minuty: potem materiał będzie w tabeli i na grafie. "
+         "Kolejne materiały możesz dodawać od razu, przeliczą się razem.")
 work = threading.Lock()  # one writer at a time: uploads and deletes
 state = {"base": k.Base([]), "campaigns": [], "status": "", "error": ""}
 pending = deque()  # materials waiting to join the base: grouping ~2000 again takes minutes on the server
+results = OrderedDict()  # token -> (material, note): a POST answers with a redirect here, so Back never re-sends a form
 PER_CAMPS, PER_ROWS, PER_GRAPH = 20, 50, 12  # one page of each list: all of them at once were 1.5 MB and 18 s
 
 
@@ -244,8 +247,8 @@ def analyse_one(m: k.Material, files: list[tuple[str, Path]], root: Path, form: 
     return m
 
 
-def ingest(form: dict, entries: list[tuple[str, Path]], work_dir: Path, keep: bool) -> list[k.Material]:
-    """Analyse every group into a material; with `keep` each one joins the base as soon as it is read."""
+def ingest(form: dict, entries: list[tuple[str, Path]], work_dir: Path) -> list[k.Material]:
+    """Analyse every group into a material."""
     one = bool(form.get("url", "").strip() or form.get("tekst", "").strip())
     groups = group(entries, one)
     taken = set(state["base"].by_id) | {m.id for m in pending}
@@ -264,8 +267,6 @@ def ingest(form: dict, entries: list[tuple[str, Path]], work_dir: Path, keep: bo
             failed.append(f"{label} ({err.__class__.__name__}: {str(err)[:80]})")
             continue
         out.append(m)
-        if keep:
-            commit(state["base"].materials + [m])
     state["error"] = ("Nie udało się odczytać: " + "; ".join(failed)) if failed else ""
     return out
 
@@ -317,7 +318,9 @@ def known(dom: str):
 def run_batch(form, entries, work_dir):
     try:
         with work:
-            ingest(form, entries, work_dir, keep=True)
+            new = ingest(form, entries, work_dir)
+            state["status"] = f"Grupuję {len(state['base'].materials) + len(new)} materiałów w kampanie"
+            commit(state["base"].materials + new)  # once for the whole set: each regroup of the base takes seconds
     except Exception as err:
         state["error"] = f"Nie udało się przeanalizować: {err.__class__.__name__}: {err}"
     finally:
@@ -566,10 +569,7 @@ które kolektor zablokował, z reklamą, stroną, serwerami i identyfikatorami. 
 <button class="btn btn-line">Wczytaj zablokowane domeny</button></form>"""
 
 FORM = """<section class="sec" id="dodaj" aria-labelledby="dodaj-t"><div class="wrap">
-<div class="sec-head"><h2 id="dodaj-t">Dodaj materiał</h2><p><b>Dla analityka: analiza materiałów, bez wysyłania do audytorów.</b>
-Wyniki zostają tutaj, w bazie i kampaniach demonstratora. Pliki jednego incydentu dają jeden materiał. Folder albo ZIP
-z podfolderami daje tyle materiałów, ile jest podfolderów. Czytamy zrzuty ekranu (OCR), zapisane strony (.html, .mhtml),
-HAR, metadane wideo (.info.json) i tekst. Wideo jest tylko odnotowane.</p></div>
+<div class="sec-head"><h2 id="dodaj-t">Dodaj materiał</h2></div>
 <form class="add" method="post" action="/analizuj" enctype="multipart/form-data">
 <div class="drop" data-drop><input type="file" name="pliki" multiple aria-label="Pliki materiału">
 <b>Upuść tu pliki, folder albo ZIP</b><span class="files" data-files>albo kliknij, żeby wybrać pliki</span>
@@ -887,6 +887,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def result(self, m, note: str):
+        """Post/Redirect/Get: the result lives at its own address, Back and refresh do not send the form again."""
+        token = secrets.token_urlsafe(9)
+        results[token] = (m, note)
+        while len(results) > 200:  # shortcut: kept in memory only, a restart forgets them; enough for a demo
+            results.popitem(last=False)
+        return self.go(f"/wynik/{token}")
+
     def do_GET(self):
         path = unquote(urlsplit(self.path).path)
         query = parse_qs(urlsplit(self.path).query)
@@ -903,6 +911,11 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/m/") and (m := state["base"].by_id.get(path[3:])
                                        or next((x for x in pending if x.id == path[3:]), None)):
             return self.send(material(m))
+        if path.startswith("/wynik/") and (r := results.get(path[7:])):
+            return self.send(material(r[0], note=r[1]))
+        if path.startswith("/wynik/"):
+            return self.send(page("Wynik wygasł", '<section class="wrap hero"><h1>Ten wynik już wygasł.</h1>'
+                                                  '<p class="lead"><a href="/#dodaj">Dodaj materiał jeszcze raz</a></p></section>'), code=404)
         self.send(page("Brak", '<section class="wrap hero"><h1>Nie ma takiej strony.</h1></section>'), code=404)
 
     def do_POST(self):
@@ -950,11 +963,11 @@ class Handler(BaseHTTPRequestHandler):
                                    self.headers.get("Cf-Connecting-Ip", ""))
                 old, note = known(dom)
                 # always fetch the live page; analyse_one merges the base record of a known domain into it
-                m = ingest({"url": f"https://{dom}/", "tekst": form.get("uwaga", "")}, [], work_dir, keep=False)[0]
+                m = ingest({"url": f"https://{dom}/", "tekst": form.get("uwaga", "")}, [], work_dir)[0]
                 if not old:
                     add_later(m)
                     note = SAVED
-                return self.send(material(m, note=e(" ".join(filter(None, (note, AUDITORS.get(sent)))))))
+                return self.result(m, e(" ".join(filter(None, (note, AUDITORS.get(sent))))))
             if self.path != "/analizuj":
                 return self.send(page("Brak", '<section class="wrap hero"><h1>Nie ma takiej strony.</h1></section>'), code=404)
             entries = expand(files, spool) if files else []
@@ -968,13 +981,13 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=run_batch, args=(form, entries, work_dir), daemon=True).start()
                 work_dir = None
                 return self.go("/#kampanie")
-            m = ingest(form, entries, work_dir, keep=False)[0]
+            m = ingest(form, entries, work_dir)[0]
             state["status"] = ""
             if keep:
                 add_later(m)
             # shortcut: placed against the base without it, so its narration (TF-IDF) does not count; enough to place one
-            return self.send(material(m, note=SAVED if keep else
-                                      "Tego materiału nie zapisano w bazie. Pokazujemy, gdzie by pasował."))
+            return self.result(m, SAVED if keep else
+                               "Tego materiału nie zapisano w bazie. Pokazujemy, gdzie by pasował.")
         except Exception as err:
             state["status"] = ""
             self.send(page("Błąd", f'<section class="wrap hero"><h1>Nie udało się przeanalizować.</h1>'

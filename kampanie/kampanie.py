@@ -666,6 +666,11 @@ def flags(m: Material) -> list[tuple[int, str]]:
         out.append((2, "Gra hazardowa w reklamie"))
     if any(t.startswith("piksel") for t in m.trackers) and m.claimed:
         out.append((1, "Strona udająca medium mierzy ruch z reklam pikselem"))
+    # a page read (template comes only from HTML) with no analytics or ad account at all: 22.11 on landing sites
+    # loaded in the crawl, blocked 1850 of 4143 (45%), passed 79 of 884 (9%); a weak sign alone, small honest sites lack them too
+    if m.template and not any(t.startswith(name) for t in m.trackers for name, _ in TRACKERS):
+        out.append((1, "Strona nie używa żadnego narzędzia do mierzenia ruchu (Google, Meta, TikTok, Yandex): "
+                       "tak jest na 45% zablokowanych i 9% przepuszczonych stron"))
     letters = len(re.findall(r"[^\W\d_]", m.text))  # a page really in Chinese uses its own colon
     if "：" in m.text and re.search("[ąęłńśźż]", low) and len(re.findall(r"[一-鿿]", m.text)) < 0.1 * letters:
         out.append((2, "Chiński dwukropek „：” w polskim tekście (pisane na chińskiej klawiaturze)"))
@@ -704,6 +709,9 @@ class Base:
                        | {("d", d) for d in COMMON})
         # an IP that serves many of our domains is shared hosting (Lovable, Netlify, Vercel…), learned from the data itself
         self.common |= {k for k, c in freq.items() if k[0] == "i" and (c >= SHARED_IP or on_cdn(k[1]))}
+        self.common_of = {}  # kind -> values: rare() rebuilt this per pair, 33 of 48 s of grouping 2000 materials
+        for kind, x in self.common:
+            self.common_of.setdefault(kind, set()).add(x)
         texts = [m.text or "" for m in materials]
         self.vec = TfidfVectorizer(token_pattern=r"(?u)\b[^\W\d_]{3,}\b", stop_words=STOP, sublinear_tf=True,
                                    max_df=1.0 if n < 5 else 0.8, max_features=20000)
@@ -788,7 +796,7 @@ class Base:
         ev = []
 
         def rare(kind, items):
-            return sorted(set(items) - {x for k, x in self.common if k == kind})
+            return sorted(set(items) - self.common_of.get(kind, set()))
 
         if tr := sorted(set(a.trackers) & set(b.trackers)):
             ev.append((0.95, "identyfikator", "ten sam identyfikator reklam/analityki: " + ", ".join(tr)))
