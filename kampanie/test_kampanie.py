@@ -1,4 +1,5 @@
 """Synthetic materials only (the organiser's set may not be published): python -m unittest test_kampanie"""
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -320,6 +321,10 @@ class Paging(unittest.TestCase):
         self.assertIn('href="/?s=2&amp;k=1#kampanie"', nav)  # the other list keeps its page, nothing else passes
         self.assertIn('href="/?s=2&amp;k=3#kampanie"', nav)
         self.assertNotIn("zle", nav)
+        far = app.pager({}, "s", 50, 403, "/")
+        self.assertEqual(re.findall(r">(\d+|…)</", far), ["1", "…", "48", "49", "50", "51", "52", "…", "403"])
+        self.assertIn('aria-current="page" aria-label="Strona 50 z 403">50<', far)
+        self.assertNotIn("…", app.pager({}, "s", 2, 4, "/"))  # 1-4 all shown, no gap
         many = app.chips([f"d{i}.pl" for i in range(8)])
         self.assertIn("Pokaż jeszcze 3", many)
         self.assertEqual(many.split("<details")[0].count("chip"), 6)  # the list's own class and the first five

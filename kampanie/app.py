@@ -396,7 +396,14 @@ def pager(query, key: str, n: int, last: int, where: str, anchor: str = "") -> s
         return e(f"{where}?{urlencode(q)}{anchor}")
     prev = f'<a class="btn btn-line btn-sm" href="{go(n - 1)}" rel="prev">← Poprzednie</a>' if n > 1 else ""
     nxt = f'<a class="btn btn-line btn-sm" href="{go(n + 1)}" rel="next">Następne →</a>' if n < last else ""
-    return f'<nav class="pager" aria-label="Strony">{prev}<span>Strona {n} z {last}</span>{nxt}</nav>'
+    nums, before = [], 0
+    for i in sorted({1, last} | set(range(max(1, n - 2), min(last, n + 2) + 1))):  # first, last and two either side
+        if i > before + 1:
+            nums.append('<span class="gap" aria-hidden="true">…</span>')
+        nums.append(f'<span class="btn btn-ink btn-sm" aria-current="page" aria-label="Strona {i} z {last}">{i}</span>' if i == n
+                    else f'<a class="btn btn-line btn-sm" href="{go(i)}" aria-label="Strona {i}">{i}</a>')
+        before = i
+    return f'<nav class="pager" aria-label="Strony">{prev}{"".join(nums)}{nxt}</nav>'
 
 
 def camp_href(cid: str) -> str:
@@ -416,7 +423,7 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
             f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
-<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=12">
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=13">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
 <script src="/static/app.js?v=6" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
