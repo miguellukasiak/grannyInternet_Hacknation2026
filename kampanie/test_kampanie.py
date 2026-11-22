@@ -418,6 +418,36 @@ class Paging(unittest.TestCase):
             app.commit = saved
             app.pending.clear()
 
+    def test_home_page_when_a_page_refuses(self):
+        import app
+        import urllib.error
+        asked = []
+
+        def fake(m, url):  # the product page is behind a bot wall, the home page is not
+            asked.append(url)
+            if "/products/" in url:
+                raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
+            k.add_html(m, "<html><title>Sklep</title><body>Sukienki</body></html>", url=url, source="pobrana strona")
+        saved = app.k.fetch, app.k.look_up_ages
+        app.k.fetch, app.k.look_up_ages = fake, lambda m: None
+        try:
+            m = app.analyse_one(k.Material("s", "s"), [], Path(tempfile.mkdtemp()),
+                                {"url": "https://sklep-test.com/pl-pl/products/sukienka"})
+            self.assertEqual(asked, ["https://sklep-test.com/pl-pl/products/sukienka", "https://sklep-test.com/"])
+            self.assertEqual(m.title, "Sklep")
+            self.assertIn("429", m.missing[0])
+            asked.clear()  # the home page itself refusing is not asked twice
+            app.analyse_one(k.Material("h", "h"), [], Path(tempfile.mkdtemp()), {"url": "https://sklep-test.com/products/"})
+            def wall(m, url):
+                asked.append(url)
+                raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
+            app.k.fetch = wall
+            app.analyse_one(k.Material("g", "g"), [], Path(tempfile.mkdtemp()), {"url": "https://sklep-test.com"})
+            self.assertEqual(asked, ["https://sklep-test.com/products/", "https://sklep-test.com/",
+                                     "https://sklep-test.com"])
+        finally:
+            app.k.fetch, app.k.look_up_ages = saved
+
     def test_saved_note_follows_regrouping(self):
         import app
         m, old = k.Material(id="n", name="n"), app.state["base"]

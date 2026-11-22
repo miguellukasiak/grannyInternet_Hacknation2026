@@ -264,6 +264,14 @@ def analyse_one(m: k.Material, files: list[tuple[str, Path]], root: Path, form: 
         except Exception as err:  # the page is gone or refuses: its address still says something
             m.missing.append(f"strona {url}: niedostępna ({err.__class__.__name__}: {str(err)[:120]})")
             k.add_url(m, url, landing=True)
+            # a bot wall on one page (Cloudflare 429 on a Shopify product, lovessy.com 22.11) often spares the home
+            # page, and the shop's template, trackers, files and robots.txt are the same there
+            home = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}/"
+            if getattr(err, "code", None) in (403, 429, 503) and url.rstrip("/") != home.rstrip("/"):
+                try:
+                    k.fetch(m, home)
+                except Exception as e:
+                    m.missing.append(f"strona główna {home}: też niedostępna ({e.__class__.__name__})")
         if old := known(k.domain_of(k.host_of(url)) or "")[0]:
             absorb(m, old)
     if text := form.get("tekst", "").strip():
