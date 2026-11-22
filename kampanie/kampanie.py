@@ -173,6 +173,22 @@ HINTS = {"goły robots.txt": (1, "robots.txt zamyka całą stronę przed wyszuki
          "cyrylica w linku": (2, "Cyrylica w parametrze linku strony")}
 TOKEN_PATH = re.compile(r"/([A-Za-z0-9]{5,16})/?")
 CYRILLIC = re.compile(r"[Ѐ-ӿ]")
+# Disguised letters, as the collector blocks them. On human decisions (collector's base, 21.11: 886 bad, 914 good)
+# they are weak alone: a fancy font in the ad text 15:16, Cyrillic in a FB page name 4:5, hence 1 point each
+MIXED_WORD = re.compile(r"\b(?=\w*[A-Za-z])(?=\w*[Ѐ-ӿΑ-ωϐ-ϵ])\w+\b")  # ЅMҮК: Cyrillic or Greek inside a Latin word
+FANCY = re.compile(r"[\U0001D400-\U0001D7FFＡ-Ｚａ-ｚ]")  # 𝖡𝗂𝖾𝖽𝗋𝗈𝗇𝗄𝖺, ＢＩＥＤＲＯＮＫＡ
+HIDDEN_CHARS = re.compile("[​-‍⁠﻿]")  # zero-width: thousands in one scam ad dodge Meta's review
+# FB page names (collector, comments on its blocks): a Chinese shop platform's "Rrieceffa-store" 17 of 19 blocked,
+# a made-up doctor on a shop not named after them 11 of 11; on human decisions 7:1 and 10:2
+THROWAWAY_PAGE = re.compile(r"[a-z]+[-.](?:store|shop|mall|buy|bazaar)(?: pl)?", re.I)
+DOCTOR = re.compile(r"^\W*(?:dr|doktor|lek|prof)\b", re.I)
+TITLES = {"dr", "doktor", "lek", "prof", "med", "hab", "inz"}
+_ASCII = str.maketrans("ąćęłńóśźż", "acelnoszz")
+
+
+def plain(s: str) -> str:
+    """Lower case without Polish letters, as a name is written in a domain (Łukasz -> lukasz)."""
+    return s.lower().translate(_ASCII)
 # a shop platform's or CMS's own robots.txt is on thousands of unrelated sites (WordPress 101:48, WooCommerce 99:50)
 PLATFORM_ROBOTS = re.compile(r"wp-|woocommerce|content-signal|lightbox|/checkouts/|shopify", re.I)
 _persons = {name: re.compile(stem) for name, stem in PERSONS.items()}
@@ -204,6 +220,7 @@ class Material:
     files: list = field(default_factory=list)  # "sha1 name" of the page's own CSS/JS: the same file, the same author
     marks: list = field(default_factory=list)  # "e-mail #1a2b3c4d (gmail.com)", see MARKS
     hints: list = field(default_factory=list)  # one page's own tells for flags(), keys of HINTS
+    pages: list = field(default_factory=list)  # the advertiser's FB page names (a video's .info.json)
     ages: dict = field(default_factory=dict)  # domain -> days since registration (RDAP)
     sources: list = field(default_factory=list)  # what was read
     missing: list = field(default_factory=list)  # what could not be read: no evidence, not counter-evidence
@@ -491,6 +508,8 @@ def add_info(m: Material, path: Path):
     info = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     add_text(m, " ".join(str(info.get(k) or "") for k in ("title", "description", "uploader", "alt_title")))
     m.title = m.title or str(info.get("title") or "")
+    if (page := str(info.get("uploader") or "").strip()) and page not in m.pages:
+        m.pages.append(page)
     for key in ("webpage_url", "original_url"):
         if str(info.get(key, "")).startswith("http"):
             add_url(m, info[key])
@@ -678,6 +697,19 @@ def flags(m: Material) -> list[tuple[int, str]]:
     letters = len(re.findall(r"[^\W\d_]", m.text))  # a page really in Chinese uses its own colon
     if "：" in m.text and re.search("[ąęłńśźż]", low) and len(re.findall(r"[一-鿿]", m.text)) < 0.1 * letters:
         out.append((2, "Chiński dwukropek „：” w polskim tekście (pisane na chińskiej klawiaturze)"))
+    if mixed := sorted({w for w in MIXED_WORD.findall(m.text) if "μ" not in w})[:3]:  # 10μg is a unit, no disguise
+        out.append((1, "Cyrylica lub greka udaje łacińskie litery w środku słowa: " + ", ".join(mixed)))
+    if len(FANCY.findall(m.text)) >= 3:
+        out.append((1, "Litery z ozdobnej czcionki Unicode: człowiek je przeczyta, filtr słów nie"))
+    if (hidden := len(HIDDEN_CHARS.findall(m.text))) >= 50:  # a few come with a normal ad pasted from elsewhere
+        out.append((2, f"{hidden} niewidocznych znaków wciśniętych w słowa (omijanie przeglądu reklam Meta)"))
+    site = plain("".join(m.landing))
+    for page in m.pages:
+        if THROWAWAY_PAGE.fullmatch(page):
+            out.append((2, f"Strona na FB „{page}” nazwana jak sklep-wydmuszka z chińskiej platformy"))
+        names = [w for w in re.findall(r"\w{3,}", plain(page)) if w not in TITLES]
+        if m.landing and DOCTOR.match(page) and not any(w in site for w in names):
+            out.append((2, f"„Lekarz” na FB ({page}), a sklep nie nosi jego nazwiska: {', '.join(m.landing[:3])}"))
     out += [HINTS[h] for h in m.hints if h in HINTS]
     return out
 

@@ -221,6 +221,17 @@ class Campaigns(unittest.TestCase):
         k.add_html(tagged := k.Material(id="g", name="g"), page.replace("</body>", "<script>gtag('config','G-AB12CD34EF')</script></body>"))
         self.assertNotIn("mierzenia ruchu", " ".join(w for _, w in k.flags(tagged)))
 
+    def test_disguised_letters_and_page_names(self):
+        m = k.Material(id="d", name="d", landing=["ondyna-pl.com"], pages=["Rrieceffa-store", "Dr Piotr Nowak"])
+        k.add_text(m, "ЅMҮК Moda Dziecięca, promocja w 𝖡𝗂𝖾𝖽𝗋𝗈𝗇𝗄𝖺 " + "ta​nio " * 60)
+        why = " | ".join(w for _, w in k.flags(m))
+        for part in ("ЅMҮК", "ozdobnej czcionki", "niewidocznych znaków", "Rrieceffa-store", "Dr Piotr Nowak"):
+            self.assertIn(part, why)
+        honest = k.Material(id="h", name="h", landing=["drirenaeris.pl", "lukasznowak.pl"],
+                            pages=["Dr Irena Eris", "Dr Łukasz Nowak", "Sklep Store Polska"])
+        k.add_text(honest, "Witamina B12 10μg, Привет, zażółć gęślą jaźń​, ½ ceny")
+        self.assertEqual(k.flags(honest), [])
+
     def test_private_url_refused(self):
         with self.assertRaises(ValueError):
             k.fetch(k.Material(id="p", name="p"), "http://127.0.0.1:8501/")
