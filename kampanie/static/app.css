@@ -56,6 +56,13 @@ a { color: inherit; text-underline-offset: 4px; }
 @keyframes blink { 50% { opacity: .2; } }
 @media (prefers-reduced-motion: reduce) { .busy i { animation: none; } }
 .notice { border-left: 6px solid var(--red); background: var(--card); padding: 16px 20px; margin-top: 24px; }
+.notice .again { margin-top: 14px; }
+.upload { border: 0; border-left: 6px solid var(--red); background: var(--card); color: var(--ink); padding: 24px 28px; width: min(480px, calc(100vw - 32px)); }
+.upload::backdrop { background: rgb(0 0 0 / .45); }
+.upload h2 { margin: 0; font: 800 24px/1.2 var(--font); }
+.upload progress { display: block; width: 100%; height: 12px; margin-top: 18px; accent-color: var(--red); }
+.upload p { margin: 12px 0 0; }
+.upload .btn { margin-top: 16px; }
 
 /* hero */
 .hero { padding-top: clamp(28px, 6vh, 72px); padding-bottom: clamp(40px, 7vh, 88px); }

@@ -373,9 +373,9 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
             f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
-<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=11">
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=12">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
-<script src="/static/app.js?v=4" defer></script></head>
+<script src="/static/app.js?v=6" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
 <header class="wrap top"><a class="mark" href="/"><i></i>grannyInternet <span>/ kampanie</span></a>
 <nav aria-label="Główna">{nav("/#kampanie", "Kampanie", "k")}{nav("/#materialy", "Materiały", "m")}{nav("/graf", "Graf powiązań", "g")}
@@ -667,7 +667,7 @@ def features(m) -> str:
     return f'<dl class="feat">{dl}</dl>{text}'
 
 
-def material(m, placed=None, base=None, note="") -> bytes:
+def material(m, placed=None, base=None, note="", again="") -> bytes:
     base = base or state["base"]
     flags = "".join(f"<li><b>+{p}</b><span>{e(why)}</span></li>" for p, why in k.flags(m))
     flags = f'<ol class="flags">{flags}</ol>' if flags else '<p class="muted">Nic z cech, które znamy z oszustw.</p>'
@@ -693,7 +693,10 @@ def material(m, placed=None, base=None, note="") -> bytes:
     similar = f'<ol class="pairs">{"".join(similar)}</ol>' if similar else '<p class="muted">Brak podobnych materiałów.</p>'
     remove = (f'<form class="rm" method="post" action="/usun"><input type="hidden" name="id" value="{e(m.id)}">'
               f'<button class="btn btn-line btn-sm">Usuń z bazy</button></form>') if m.id in state["base"].by_id else ""
-    note = f'<div class="notice" role="status">{note}</div>' if note else ""
+    more = (f'<p class="again"><a class="btn btn-ink btn-sm" href="/#{again}">'
+            f'{"Zgłoś kolejną domenę" if again == "zglos" else "Dodaj kolejny materiał"} <span aria-hidden="true">→</span></a></p>'
+            if again else "")
+    note = f'<div class="notice" role="status">{note}{more}</div>' if note else ""
     return page(m.id, f"""<section class="wrap hero"><div class="case-head"><div><p class="eyebrow">Materiał {e(m.id)}</p>
 <h1>{e(m.name)}</h1></div><div>{stamp(m, big=True)}</div></div>{note}
 <div class="case-grid"><div class="panel"><h2>Co zwraca uwagę</h2>{flags}</div>
@@ -887,10 +890,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def result(self, m, note: str):
+    def result(self, m, note: str, again: str = "dodaj"):
         """Post/Redirect/Get: the result lives at its own address, Back and refresh do not send the form again."""
         token = secrets.token_urlsafe(9)
-        results[token] = (m, note)
+        results[token] = (m, note, again)
         while len(results) > 200:  # shortcut: kept in memory only, a restart forgets them; enough for a demo
             results.popitem(last=False)
         return self.go(f"/wynik/{token}")
@@ -912,7 +915,7 @@ class Handler(BaseHTTPRequestHandler):
                                        or next((x for x in pending if x.id == path[3:]), None)):
             return self.send(material(m))
         if path.startswith("/wynik/") and (r := results.get(path[7:])):
-            return self.send(material(r[0], note=r[1]))
+            return self.send(material(r[0], note=r[1], again=r[2]))
         if path.startswith("/wynik/"):
             return self.send(page("Wynik wygasł", '<section class="wrap hero"><h1>Ten wynik już wygasł.</h1>'
                                                   '<p class="lead"><a href="/#dodaj">Dodaj materiał jeszcze raz</a></p></section>'), code=404)
@@ -967,7 +970,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not old:
                     add_later(m)
                     note = SAVED
-                return self.result(m, e(" ".join(filter(None, (note, AUDITORS.get(sent))))))
+                return self.result(m, e(" ".join(filter(None, (note, AUDITORS.get(sent))))), "zglos")
             if self.path != "/analizuj":
                 return self.send(page("Brak", '<section class="wrap hero"><h1>Nie ma takiej strony.</h1></section>'), code=404)
             entries = expand(files, spool) if files else []

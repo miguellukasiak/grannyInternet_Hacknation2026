@@ -421,7 +421,8 @@ class Paging(unittest.TestCase):
             self.assertTrue(r.getheader("Location").startswith("/wynik/"))
             c.request("GET", r.getheader("Location")); r2 = c.getresponse()
             self.assertEqual(r2.status, 200)
-            self.assertIn("nie zapisano", r2.read().decode())
+            self.assertIn("nie zapisano", body := r2.read().decode())
+            self.assertIn('href="/#dodaj">Dodaj kolejny materiał', body)
             c.request("GET", "/wynik/nie-ma"); r3 = c.getresponse(); r3.read()
             self.assertEqual(r3.status, 404)
         finally:
