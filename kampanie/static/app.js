@@ -69,3 +69,8 @@ document.querySelectorAll("select[form=mf]").forEach((s) => s.addEventListener("
 document.querySelectorAll("#mf").forEach((f) => f.addEventListener("submit", () =>  // a short address: empty filters stay out of it
   document.querySelectorAll("[form=mf]").forEach((x) => { if (!x.value) x.disabled = true; })));
 addEventListener("pageshow", () => document.querySelectorAll("[form=mf]").forEach((x) => { x.disabled = false; }));  // back button
+if ("wait" in document.documentElement.dataset) {  // one reload when the grouping ends, not one every 3 s mid-reading
+  const ask = () => fetch("/stan", { cache: "no-store" }).then((r) => r.text())
+    .then((busy) => (busy === "0" ? location.reload() : setTimeout(ask, 3000)), () => setTimeout(ask, 10000));
+  setTimeout(ask, 3000);
+}

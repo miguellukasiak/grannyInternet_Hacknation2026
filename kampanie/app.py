@@ -421,13 +421,14 @@ def num(x: float) -> str:
 def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
     def nav(href, text, key):
         return f'<a href="{href}"{" aria-current=page" if key == here else ""}>{text}</a>'
-    busy = (f'<div class="busy" role="status"><div class="wrap"><i></i>{e(state["status"])}. Strona odświeża się sama.'
-            f'</div></div>') if state["status"] else ""
-    return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
+    busy = (f'<div class="busy" role="status"><div class="wrap"><i></i>{e(state["status"])}. Strona odświeży się sama, '
+            f'gdy skończę.</div></div>') if state["status"] else ""
+    wait = refresh and state["status"]  # app.js asks /stan and reloads once at the end; a refresh every 3 s threw the reader
+    return f"""<!doctype html><html lang="pl"{" data-wait" if wait else ""}><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">{'<noscript><meta http-equiv="refresh" content="3"></noscript>' if wait else ''}
 <title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=13">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
-<script src="/static/app.js?v=6" defer></script></head>
+<script src="/static/app.js?v=7" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
 <header class="wrap top"><a class="mark" href="/"><i></i>grannyInternet <span>/ kampanie</span></a>
 <nav aria-label="Główna">{nav("/#kampanie", "Kampanie", "k")}{nav("/#materialy", "Materiały", "m")}{nav("/graf", "Graf powiązań", "g")}
@@ -964,6 +965,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(index(query))
         if path == "/graf":
             return self.send(graph(query))
+        if path == "/stan":  # still busy grouping: 1 or 0, for the page waiting on it
+            return self.send(b"1" if state["status"] else b"0", "text/plain; charset=utf-8")
         if path == "/graf.json":
             return self.send(json.dumps(graph_data(query), ensure_ascii=False).encode(), "application/json; charset=utf-8")
         if path == "/eksport.json":

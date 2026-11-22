@@ -533,6 +533,11 @@ class Paging(unittest.TestCase):
                 for bad in ("/strona/..%2Ftajne.json.gz", "/strona/../tajne.json.gz", "/strona/b.top.json.gz"):
                     c.request("GET", bad); r5 = c.getresponse(); r5.read()
                     self.assertEqual(r5.status, 404, bad)
+            for status, said in (("Przeliczam", b"1"), ("", b"0")):  # the waiting page asks this, then reloads once
+                app.state["status"] = status
+                c.request("GET", "/stan"); r6 = c.getresponse()
+                self.assertEqual(r6.read(), said)
+                self.assertEqual(" data-wait" in app.page("x", "", refresh=True).decode(), bool(status))
         finally:
             c.close()
             srv.shutdown()
