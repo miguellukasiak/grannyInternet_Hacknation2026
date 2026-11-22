@@ -1,163 +1,265 @@
 # grannyInternet: od pojedynczej reklamy do kampanii
 
 Demonstrator do zadania „Kolekcjoner fejków / FOLLOW THE FAKE”. Dla każdej reklamy od razu pokazuje,
-**co w niej zwraca uwagę** (wstępny werdykt z punktami i powodami). Potem **łączy reklamy w kampanie** po
-sygnałach tekstowych, wizualnych, semantycznych i infrastrukturalnych. Każde powiązanie ma dowód zapisany
-jednym zdaniem.
+**co w niej zwraca uwagę** (wstępny werdykt z punktami i powodami). Potem **łączy reklamy w kampanie** na
+podstawie sygnałów tekstowych, wizualnych, semantycznych i infrastrukturalnych. Każde powiązanie ma dowód
+opisany jednym zdaniem.
 
 Obok działa system, który te reklamy zbiera: kolektor przeszukujący bibliotekę reklam Meta według
 harmonogramu, panel weryfikacji dla ludzi i filtr DNS (Blocky), który blokuje domeny oszustw.
 
-## Szybki start (sam demonstrator kampanii)
+## Działa na żywo
 
-Potrzebny jest tylko Docker.
+| Adres | Co tam jest |
+|---|---|
+| https://kampanie.grannyinternet.me/ | demonstrator kampanii: wgrywanie materiałów, kampanie z dowodami, graf, eksport |
+| https://grannyinternet.me/ | w czasie hackathonu przekierowuje (302) na demonstrator |
+| https://grannyinternet.me/audytorzy/ | strona dla jury i dla ludzi: jak działa cały system |
 
-```powershell
-git clone https://github.com/miguellukasiak/grannyInternet_Hacknation2026
-cd grannyInternet_Hacknation2026
-docker compose up --build kampanie
-```
+Demonstrator działa na naszym serwerze razem z kolektorem i ma dostęp tylko do odczytu do jego bazy werdyktów.
+Najszybciej sprawdzić go tak:
 
-Potem otwórz http://127.0.0.1:8501 i wgraj materiały w przeglądarce: pliki, cały folder albo ZIP (do 2 GB),
-adres strony albo sam tekst reklamy.
+1. **Wczytaj zablokowane domeny** (sekcja „Dodaj materiał”). Domeny zablokowane przez kolektor wchodzą jako
+   materiały: tekst reklamy, strona, linki, IP, wiek domeny, piksele i strona na Facebooku. Po chwili widać
+   kampanie, które z nich powstały.
+2. **Dodaj własny materiał** (`/#dodaj`): zrzut reklamy, zapisaną stronę, HAR, folder, ZIP, sam adres albo
+   sam tekst reklamy. Materiał dostaje werdykt i trafia do kampanii albo zostaje nowym wzorcem.
+3. Otwórz dowolną kampanię i parę materiałów. Przy każdej parze widać przesłanki: z jaką siłą i dlaczego.
 
-- Tryb offline: ustaw `ONLINE=0` (PowerShell: `$env:ONLINE=0`, bash: `ONLINE=0 docker compose up --build kampanie`). Wtedy nic nie wychodzi z kontenera, a wklejony adres jest tylko zapisany. Bez tej zmiennej moduł pyta RDAP o wiek domen docelowych i pobiera wklejoną stronę (z blokadą adresów prywatnych, SSRF).
-- Wgrane materiały i ich cechy trafiają do wolumenu `kampanie` (`/data/baza.json`). Materiał usuwa się na jego stronie, całą bazę przyciskiem „Wyczyść bazę”.
-- Domeny zablokowane przez kolektor: gdy działa cały system, kontener widzi `verdicts.db` tylko do odczytu (wolumen `verdicts`, zmienna `KOLEKTOR`) i przycisk „Wczytaj zablokowane domeny” wczytuje je jako materiały: tekst reklamy, stronę, linki, IP, wiek domeny, piksele i stronę FB. Bez tej bazy przycisku nie ma.
-- Bez GUI: `docker compose run --rm -v "${PWD}/folder:/x:ro" kampanie python kampanie.py /x` wypisuje kampanie i werdykty jako tekst (każdy podfolder to jeden materiał).
-- Testy: `docker compose run --rm --no-deps kampanie python -m unittest -v`.
+Gdyby serwer przestał działać, na końcu tego pliku jest [uruchomienie u siebie w Dockerze](#ostatnia-deska-ratunku-uruchomienie-u-siebie).
 
-### Co przyjmuje
+## Jak łączymy reklamy w kampanie
 
-Jedno wgranie zamienia się w materiały tak:
+W skrócie: każdy materiał rozkładamy na cechy. Każdą parę materiałów porównujemy cecha po cesze. Każda wspólna
+cecha jest jedną przesłanką z siłą od 0 do 1 i ze zdaniem „dlaczego”. Przesłanki składamy jak niezależne
+poszlaki. Wcześniej wyrzucamy to, co wspólne dla platform, a nie dla jednego autora. Kampania powstaje tylko
+z powiązań, w których jest co najmniej jedna **twarda** przesłanka. Cały kod jest w `kampanie/kampanie.py`.
+
+### 1. Materiał
+
+Materiał to jeden incydent: jedna reklama ze wszystkim, co o niej wiadomo. Jedno wgranie zamienia się
+w materiały tak:
 
 - pliki jednego incydentu (zrzuty, zapisana strona, HAR) dają **jeden materiał**;
-- folder albo ZIP, w którym wszystkie pliki leżą w podfolderach, daje **materiał na podfolder** (zestaw incydentów);
-- foldery-opakowania, w których jest tylko jeden podfolder, są pomijane, a ostatni z nich daje nazwę;
+- folder albo ZIP, w którym wszystkie pliki leżą w podfolderach, daje **materiał na każdy podfolder** (zestaw incydentów);
+- foldery-opakowania z jednym tylko podfolderem są pomijane, a ostatni z nich daje nazwę;
 - adres strony albo tekst reklamy razem z plikami daje zawsze jeden materiał.
-
-Zestaw wielu incydentów jest analizowany w tle, a strona sama się odświeża. Rozpoznawane są:
 
 | Plik | Co z niego bierzemy |
 |---|---|
-| `.html`, `.htm`, `.mhtml` | tekst, linki, domeny, identyfikatory śledzące (piksel Meta, GA, GTM i inne), schemat parametrów linku, zasoby strony, szablon HTML |
-| `.har` | łańcuch przekierowań, adresy IP serwerów, wszystkie domeny i zasoby z ruchu |
+| `.html`, `.htm`, `.mhtml` | tekst, tytuł, linki, domeny, identyfikatory śledzące, e-maile, pola formularzy, nazwy zasobów, szablon HTML |
+| `.har` | łańcuch przekierowań, adresy IP serwera strony, wszystkie domeny z ruchu, zapytania strony do własnego API, treść własnych plików CSS/JS |
 | `.png`, `.jpg`, `.webp`, `.gif`, `.bmp` | OCR (tesseract pol+eng): podpis reklamy, adres z paska przeglądarki; dHash obrazu |
-| `.info.json` (yt-dlp) | opis i tytuł wideo, identyfikatory reklamy |
-| `.mp4`, `.webm` i inne wideo | odnotowane jako materiał; treść tylko z metadanych |
+| `.info.json` (yt-dlp) | opis i tytuł wideo, identyfikatory reklamy, nazwa strony reklamodawcy na Facebooku |
+| `.css`, `.js` z folderu `_files` zapisanej strony | odcisk (sha1) własnego pliku strony |
+| `robots.txt` | nietypowe reguły jako ślad autora; sam „Disallow: /” jako cecha strony |
 | `.txt` | tekst reklamy, adresy w treści |
+| `.mp4`, `.webm` i inne wideo | odnotowane; treść tylko z metadanych i zrzutów |
 
-Pojedynczy materiał od razu pokazuje
-werdykt, przypisanie do istniejącej kampanii (z dowodem najsilniejszego powiązania) albo informację
-„nowy wzorzec”.
+Sam adres strony demonstrator pobiera (tylko HTML, nigdy plików): idzie za przekierowaniami, każde sprawdzając,
+czy prowadzi na adres publiczny (ochrona przed SSRF), czyta `robots.txt` i pyta RDAP o wiek domeny. Gdy podstrona
+odmawia (403, 429, 503), czyta stronę główną tej samej domeny. Szablon, piksele, pliki, `robots.txt` i IP sklepu
+są tam te same, a karta materiału nadal mówi, że podstrona odmówiła.
 
-## Metodyka
+### 2. Cechy
 
-### 1. Cechy materiału
+| Cecha | Skąd | Do czego |
+|---|---|---|
+| tekst i 5-wyrazowe fragmenty (shingles, crc32) | HTML, OCR, metadane, wklejony tekst | kopie i warianty tego samego tekstu |
+| wektor TF-IDF | tekst bez słów funkcyjnych | podobna narracja innymi słowami |
+| znane osoby, marki, tematy | słowniki (rdzenie z odmianą: Brzoska, Brzoskę) | poszlaki i werdykt |
+| domeny strony docelowej i przekierowań | adres, HAR, zapisana strona, pasek z OCR | ta sama strona |
+| pozostałe domeny | linki, zasoby, ruch | wspólna infrastruktura |
+| identyfikatory | piksel Meta, GA, GTM, Google Ads, piksel TikTok, Yandex Metrica, `ad_id`, `campaign_id`, weryfikacja domeny Meta/Google | to samo konto reklamowe = ten sam właściciel |
+| schemat parametrów linku | nazwy parametrów linku z reklamy (co najmniej 3) | ten sam system kampanii |
+| ślady autora | wygenerowana nazwa parametru, nietypowy `robots.txt`, e-mail (zapisane jako skrót sha1) | jeden autor wielu stron |
+| własne pliki CSS/JS | sha1 treści (nazwa nie ma znaczenia) | ten sam plik = ten sam autor |
+| zestaw (API strony) | zapytania POST/PUT strony do własnego serwera, z identyfikatorami zamienionymi na `*` | ten sam „zestaw do oszustw” po stronie serwera |
+| szablon HTML | crc32 6-tagowych ciągów struktury strony (tag + 2 klasy) | ta sama strona z innym tekstem |
+| obrazy | dHash 64-bitowy całości i środka (po obcięciu 5% i 10% brzegów) | ten sam obraz po przeskalowaniu i przycięciu |
+| adresy IP serwera | HAR, pobrana strona | wspólny serwer (tylko poszlaka) |
 
-Tekst (z HTML, OCR, metadanych), 5-wyrazowe fragmenty tekstu (shingles), wektor TF-IDF narracji, znane osoby,
-marki, pod które strona się podszywa, tematy (inwestycje, zdrowie, hazard…), domeny strony docelowej
-i przekierowań (tldextract), identyfikatory reklamowe i analityczne, schemat parametrów linku z reklamy,
-adresy IP, dHash obrazów, nazwy plików zasobów i struktura szablonu HTML.
+### 3. Przesłanki i ich siła
 
-### 2. Porównanie par: przesłanki
+Dwa materiały porównujemy sygnał po sygnale (`Base.compare`). Każdy pasujący sygnał to jedna przesłanka.
 
-Dwa materiały są porównywane sygnał po sygnale. Każdy pasujący sygnał to jedna przesłanka z siłą i zdaniem
-„dlaczego”:
+| Przesłanka | Siła | Twarda? |
+|---|---|---|
+| ten sam identyfikator reklam lub analityki | 0,95 | tak |
+| ta sama domena strony docelowej | 0,90 | tak |
+| identyczne własne pliki CSS/JS | 0,7 + 0,1 za plik, do 0,9 | tak |
+| te same obrazy | 0,6 + 0,1 za każdy kolejny, do 0,9 | tak |
+| wspólna wygenerowana nazwa parametru w linku | 0,85 | tak |
+| to samo API strony (zestaw) | 0,4 za ścieżkę, do 0,8 | tak |
+| wspólne 5-wyrazowe fragmenty tekstu (Jaccard ≥ 15%) | 0,3 + udział, do 0,95 | tak, gdy udział ≥ 40% |
+| ten sam nietypowy `robots.txt` | 0,6 | tak |
+| zbliżony szablon HTML (≥ 30% wspólnej struktury) | 0,6 × udział | tak |
+| wspólne domeny w linkach i zasobach | 0,3 za domenę, do 0,6 | tak |
+| te same pliki strony (po nazwie) | 0,15 za plik, do 0,6 | tak |
+| ten sam e-mail na stronie | 0,45 | tak |
+| podobna narracja (kosinus TF-IDF ≥ 0,25) | 0,8 × kosinus, do 0,7 | nie |
+| ten sam schemat parametrów linku | 0,6 | nie |
+| ten sam adres IP serwera | 0,4 | nie |
+| te same osoby | 0,35 | nie |
+| ta sama podrabiana marka | 0,30 | nie |
+| ten sam temat | 0,15 | nie |
 
-| Przesłanka | Siła |
-|---|---|
-| ten sam identyfikator reklam/analityki | 0,95 |
-| ta sama domena strony docelowej | 0,90 |
-| wspólne 5-wyrazowe fragmenty tekstu (Jaccard ≥ 15%) | 0,3 + udział, do 0,95 |
-| te same obrazy (dHash całości i środka po obcięciu 5% i 10% brzegów, różnica ≤ 4 z 64 bitów) | 0,6 + 0,1 za każdy kolejny, do 0,9 |
-| podobna narracja (kosinus TF-IDF ≥ 0,25) | 0,8 × kosinus, do 0,7 |
-| ten sam schemat parametrów linku | 0,6 |
-| wspólne domeny w linkach i zasobach | 0,3 za domenę, do 0,6 |
-| te same pliki strony | 0,15 za plik, do 0,6 |
-| zbliżony szablon HTML (≥ 30% wspólnej struktury) | 0,6 × udział |
-| ten sam adres IP serwera (poza CDN i hostingiem współdzielonym) | 0,4 |
-| te same osoby | 0,35 |
-| ta sama podrabiana marka | 0,30 |
-| ten sam temat | 0,15 |
+Przesłanki składają się jak niezależne poszlaki:
 
-Przesłanki składają się jak niezależne poszlaki: `wynik = 1 − ∏(1 − siła)`. Sygnały wspólne dla co najmniej
-40% materiałów (platformy, CDN-y, popularne biblioteki) i lista domen ogólnych (facebook.com,
-googleapis.com…) nie są przesłanką. Adresy anycast Cloudflare i Shopify też nie, bo odpowiadają z nich tysiące
-niezwiązanych stron. To samo dotyczy każdego IP, z którego w bazie odpowiada co najmniej 20 domen: to hosting
-współdzielony (w bazie kolektora np. Lovable, Netlify, Vercel), a nie jeden właściciel. Wspólny serwer ma siłę poniżej progu kampanii, bo hosting współdzielony obsługuje wiele obcych
-sobie stron, więc sam nie tworzy kampanii. Subdomeny platform (x.netlify.app, y.myshopify.com, z.lovable.app) to
-osobne strony, a nie jedna domena.
+```
+wynik = 1 − ∏(1 − siła)
+```
+
+Przykład rachunku: 50% wspólnego tekstu (0,8), ten sam obraz (0,6) i ten sam temat (0,15) dają
+`1 − 0,2 × 0,4 × 0,85 = 0,93`. Każda przesłanka może tylko podnieść wynik. Żadna go nie obniża.
+
+**Ślady autora.** To cechy, które zostawia jeden człowiek albo jeden zestaw do oszustw, a nie platforma.
+Sprawdziliśmy je na bazie kolektora z 22.11 na unikalnych stronach docelowych (zablokowane : przepuszczone):
+
+- wygenerowana nazwa parametru w linku (np. 15 liter bez samogłosek, której nikt nie wybrał ręcznie): 62 : 0, w 16 grupach i żadna nie jest mieszana;
+- ten sam nietypowy `robots.txt` (co najmniej 3 reguły, bez domyślnych reguł WordPressa i Shopify): 183 : 0;
+- ten sam e-mail: 125 zablokowanych stron, ale część grup to agencje i hostingi z mieszanymi stronami, dlatego ma najniższą siłę.
+
+Wartości śladów zapisujemy tylko jako skrót sha1, bo to tokeny oszustów albo czyjś e-mail.
+
+### 4. Co nie jest dowodem
+
+Większość fałszywych powiązań bierze się z rzeczy wspólnych dla tysięcy niezwiązanych stron. Dlatego przed
+porównaniem odrzucamy:
+
+- **wszystko, co ma co najmniej 40% materiałów** w bazie (domena, zasób, IP, plik, API, ślad). To platforma, nie kampania;
+- **własne API i pliki CSS/JS** odrzucamy dopiero od 10 materiałów. W małym zbiorze wspólny plik to zwykle sama kampania;
+- **listę domen ogólnych**: facebook.com, googleapis.com, gstatic.com, jsdelivr.net, amazon.*, allegro.pl,
+  temu.com, linktr.ee, bit.ly, wa.me i podobne (amazon.com był celem 121 naszych zablokowanych domen);
+- **adresy anycast Cloudflare i Shopify**, bo z jednego IP odpowiadają tysiące stron;
+- **każde IP, z którego odpowiada co najmniej 20 domen bazy**. To hosting współdzielony (w bazie kolektora
+  np. Lovable, Netlify, Vercel), a nie jeden właściciel. Próg wyliczamy z samych danych;
+- **kopie popularnych bibliotek** (jQuery, Bootstrap, fbevents, Swiper, skrypty Map Google…) i pliki motywów
+  WordPressa i Shopify. Ten sam motyw obsługuje tysiące sklepów;
+- **subdomeny platform** (x.netlify.app, y.myshopify.com, z.lovable.app, a także b-cdn.net, surge.sh, tilda.ws
+  i inne spoza Public Suffix List). To osobne strony osobnych właścicieli, a nie jedna domena;
+- **nazwy parametrów, które ktoś wybrał** (`campaign`, `source`, `utm_*`, `variant`, `pixel`…). Za ślad autora
+  uznajemy tylko nazwy wygenerowane.
+
+Wspólny serwer ma siłę 0,4, czyli poniżej progu kampanii. Nawet po tych filtrach jeden serwer obsługuje wiele
+obcych sobie stron.
+
+### 5. Twarde i miękkie przesłanki
+
+Miękkie przesłanki to narracja, temat, osoba, marka, serwer i schemat parametrów. Bez twardej przesłanki
+powiązanie nie tworzy kampanii (`Base.link`), choćby wynik był wysoki. Przykład: podobna narracja (0,7),
+ta sama osoba (0,35), ten sam temat (0,15) i ten sam serwer (0,4) dają razem 0,90, a nie dowodzą niczego.
+Tak samo wyglądają niezwiązane oszustwa, które pożyczają tę samą twarz.
+
+Sprawdziliśmy to na 5404 domenach zablokowanych przez kolektor:
+
+- same miękkie przesłanki skleiły w jeden łańcuch **1054 domeny** ze zdrowiem, paczkami i inwestycjami naraz;
+- po wyłączeniu narracji, tematów i osób łańcuch **431 domen** trzymały jeszcze dwie rzeczy: schemat
+  `utm_source,utm_medium,utm_campaign`, który ma każdy reklamodawca, i 15–20% wspólnego tekstu. Tyle zwykle
+  zajmuje stopka kasy tej samej platformy sklepowej. Dlatego tekst jest twardy dopiero od 40% wspólnych fragmentów.
+
+### 6. Grupowanie
+
+- **Kampania**: grupowanie aglomeracyjne (scikit-learn) z pojedynczym wiązaniem (single linkage) na odległości
+  `1 − wynik` przy progu 0,5. Liczymy je na macierzy samych twardych powiązań. Każdy członek ma co najmniej
+  jedno powiązanie o sile ≥ 0,5 z twardą przesłanką. Właśnie to powiązanie jest pokazane jako dowód, więc
+  każdy element kampanii da się prześledzić do konkretnej pary.
+- **Rodzina kampanii**: wiązanie średnie (average linkage) przy progu 0,2 na pełnej macierzy, z miękkimi
+  przesłankami. Temat czy osoba łączą wtedy kampanie w rodziny, ale nie sklejają wszystkiego w łańcuch, bo
+  liczy się średnia ze wszystkich par, a nie jedna para.
+- **Duplikaty i warianty**: duplikat to ten sam tekst (Jaccard fragmentów ≥ 0,9) albo ta sama domena przy
+  Jaccardzie ≥ 0,7. Kopia pod inną domeną jest więc duplikatem, a reszta kampanii to warianty.
+- **Nowy materiał** (`Base.place`): trafia do kampanii, z którą ma najsilniejsze twarde powiązanie ≥ 0,5. Jeśli
+  takiego nie ma, dostaje status „nowy wzorzec” razem z ośmioma najbliższymi materiałami i średnim dopasowaniem
+  do każdej kampanii. Materiał wgrany drugi raz jest rozpoznawany i nie powstaje jego kopia w bazie.
+- **Etykieta kampanii**: trzy najczęstsze osoby, marki lub tematy jej członków. Przy kampanii widać też,
+  jakie przesłanki ją łączą, jej domeny, duplikaty i cztery najmocniejsze pary.
+
+### 7. Skala
+
+Porównanie każdej pary z każdą przy tysiącach materiałów trwałoby zbyt długo, więc `Base.candidates` wybiera
+tylko pary, które coś łączy: wspólna domena, IP, plik, identyfikator, ślad, osoba czy temat. Kosinusy tekstów
+i Jaccardy fragmentów oraz szablonów liczymy iloczynami macierzy rzadkich w blokach po 1000 wierszy. Pary bez
+żadnej wspólnej cechy mają wynik 0 i nigdy nie są porównywane.
+
+### 8. Brak danych
 
 **Brak danych to brak przesłanki, nigdy przesłanka przeciw.** Strona, która już nie działa, łączy się dalej
 tekstem reklamy i zrzutem ekranu. Każdy materiał ma listę tego, czego zabrakło (np. „brak tekstu”, „RDAP: brak
-odpowiedzi”), więc widać, na czym opiera się wynik.
+odpowiedzi”, „strona główna też niedostępna”), więc widać, na czym opiera się wynik.
 
-### 3. Grupowanie
+### 9. Weryfikacja zrzutu i obrazów
 
-- **Kampania**: grupowanie aglomeracyjne z pojedynczym wiązaniem (single linkage) na odległości `1 − wynik`
-  przy progu 0,5. Każdy członek kampanii ma co najmniej jedno powiązanie o sile ≥ 0,5 i właśnie to powiązanie
-  jest pokazane jako dowód. Powiązanie musi mieć co najmniej jedną twardą przesłankę (identyfikator, domena,
-  tekst skopiowany co najmniej w 40%, obraz, szablon, pliki). Sama narracja, temat, osoba, marka i serwer nie
-  wystarczą: na 5404 zablokowanych domenach kolektora skleiły w łańcuch 1054 domeny ze zdrowiem, paczkami i
-  inwestycjami naraz. Schemat parametrów linku też jest tylko poszlaką (`utm_source,utm_medium,utm_campaign`
-  ma każdy reklamodawca), a 15–20% wspólnego tekstu to zwykle stopka kasy tej samej platformy sklepowej: razem
-  trzymały jeszcze łańcuch 431 domen.
-- **Rodzina kampanii**: wiązanie średnie (average linkage) przy progu 0,2. Słabe poszlaki, takie jak temat
-  czy osoba, łączą wtedy kampanie w rodziny, ale nie sklejają wszystkiego w łańcuch.
-- **Duplikaty i warianty**: ten sam tekst (Jaccard fragmentów ≥ 0,9) albo ta sama domena docelowa przy
-  Jaccardzie ≥ 0,7. Kopia pod inną domeną jest więc oznaczona jako duplikat, a reszta kampanii to warianty.
-- **Nowy materiał**: trafia do kampanii, z którą ma najsilniejsze powiązanie ≥ 0,5 z twardą przesłanką. Jeśli takiego nie ma,
-  dostaje status „nowy wzorzec” razem z informacją, co było najbliżej.
+Zrzut ekranu jest pełnoprawnym materiałem. OCR odczytuje podpis reklamy i adres z paska przeglądarki, który
+trafia do domen tak jak link. dHash łączy ten sam obraz po przeskalowaniu, ponownej kompresji, zmianie jasności
+i obcięciu brzegów. Dwa obrazy są tym samym, gdy różnią się co najwyżej 4 z 64 bitów. Na 147 obrazach zestawu
+organizatora daje to 20 par i wszystkie są trafne. Przy progu 5 łączyły się też dwie pary różnych twarzy
+w jednakowej okrągłej ramce, dlatego próg wynosi 4. dHash nie łączy obrazu przyciętego z jednej strony ani
+przerobionego (inne imię na tym samym fałszywym panelu banku). Zrzut strony, która zniknęła, nadal łączy się
+z kampanią przez tekst, adres i obraz.
 
-### 4. Wstępny werdykt
+## Wstępny werdykt
 
-Punkty za cechy oszustwa, każda z powodem:
+Niezależnie od kampanii każdy materiał dostaje punkty za cechy oszustwa, każdą z powodem (`flags`):
 
 | Cecha | Punkty |
 |---|---|
 | wizerunek znanej osoby przy obietnicy zarobku | 3 |
 | strona podaje się za markę, a działa na obcej domenie | 3 |
 | sensacyjna „wiadomość” o znanej osobie; znana osoba poleca środek na zdrowie | 2 |
-| nazwa domeny udaje markę; młoda domena (RDAP) | 2 |
+| nazwa domeny udaje markę; młoda domena (RDAP, poniżej 180 dni) | 2 |
 | obietnica cudownego leczenia; gra hazardowa w reklamie | 2 |
+| chiński dwukropek „：” w polskim tekście | 2 |
+| co najmniej 50 niewidocznych znaków wciśniętych w słowa | 2 |
+| strona na FB nazwana jak sklep-wydmuszka („xxx-store”) | 2 |
+| „lekarz” na FB, a sklep nie nosi jego nazwiska | 2 |
+| cyrylica w parametrze linku strony | 2 |
 | tania domena jednorazowa; przekierowania przez kilka domen | 1 |
 | formularz zbiera telefon; presja czasu; wklejone „komentarze z Facebooka” | 1 |
 | strona udająca medium mierzy ruch z reklam pikselem | 1 |
+| strona nie używa żadnego narzędzia do mierzenia ruchu | 1 |
+| cyrylica lub greka w środku łacińskiego słowa (ЅMҮК); litery z ozdobnej czcionki Unicode | 1 |
+| `robots.txt` zamyka całą stronę; link prowadzi do losowego tokenu; słowo „WYŁĄCZONY” w kodzie strony | 1 |
 
-Wynik: ≥ 4 punkty to **wysokie ryzyko**, ≥ 2 to **podejrzane**, a mniej to brak wyraźnych cech.
+Wynik: ≥ 4 punkty to **wysokie ryzyko**, ≥ 2 to **podejrzane**, mniej to słaby sygnał albo brak wyraźnych cech.
 
-### 5. Weryfikacja zrzutu strony
+Nowe cechy sprawdziliśmy na danych, zanim dostały punkty:
 
-Zrzut ekranu jest pełnoprawnym materiałem. OCR odczytuje podpis reklamy i adres z paska przeglądarki, który
-trafia do domen jak link. dHash łączy ten sam obraz po przeskalowaniu, ponownej kompresji, zmianie jasności i obcięciu brzegów. Na 147 obrazach zestawu organizatora daje 20 par, wszystkie trafne; przy progu 5 łączył też dwie pary różnych twarzy w jednakowej okrągłej ramce. Nie łączy obrazu przyciętego z jednej strony ani przerobionego (inne imię na tym samym fałszywym panelu banku). Zrzut strony,
-która zniknęła, nadal łączy się z kampanią przez tekst, adres i obraz.
+- na unikalnych stronach docelowych z bazy kolektora z 22.11 (zablokowane : przepuszczone): goły `robots.txt`
+  526 : 4, token w linku 481 : 6 (oba naraz 342 : 1), „WYŁĄCZONY” 136 : 5, cyrylica w linku 14 : 0, chiński
+  dwukropek 87 : 0. Brak narzędzi do mierzenia ruchu ma 45% zablokowanych (1850 z 4143) i 9% przepuszczonych
+  (79 z 884), dlatego daje tylko 1 punkt;
+- na decyzjach ludzi z kopii bazy kolektora z 21.11 (886 złych, 914 dobrych): ozdobna czcionka 15 : 16 i
+  cyrylica w nazwie strony FB 4 : 5. Same nic nie znaczą, dlatego dają po 1 punkcie. Strona FB typu
+  „xxx-store” wypadła 7 : 1, a „lekarz” na sklepie nienazwanym od niego 10 : 2.
 
-### 6. Interfejs
+## Interfejs
 
-- `/#zglos`: zgłoszenie podejrzanej domeny, tak jak na grannyinternet.me. Domena, którą baza już zna, od razu pokazuje, kto ją zablokował (reguła, model albo człowiek) i do jakiej kampanii należy. Nowa domena staje się materiałem i dostaje werdykt.
-- `/`: wgrywanie materiałów (pliki, folder, ZIP, adres, tekst), kampanie z rodzinami, domenami, duplikatami i najmocniejszymi parami wraz z przesłankami oraz tabela materiałów z werdyktami.
-- `/m/<id>`: werdykt z punktami, cechy, brakujące dane oraz kampania i najbliższe materiały; tu materiał usuwa się z bazy.
-- `/graf`: graf powiązań (SVG), kampanie jako pierścienie.
+- `/`: sekcje „Dodaj materiał” (`/#dodaj`: pliki, folder, ZIP, adres, tekst oraz wczytanie domen zablokowanych
+  przez kolektor), „Kampanie” (rodziny, domeny, duplikaty, najmocniejsze pary z przesłankami, serwery stron)
+  i „Materiały” (tabela z werdyktami i filtrami).
+- `/m/<id>`: werdykt z punktami, cechy, brakujące dane, kampania i najbliższe materiały. Tu materiał usuwa się z bazy.
+- `/graf`: graf powiązań (SVG), kampanie jako pierścienie; `/graf.json` to jego dane.
 - `/eksport.json`: kampanie, pary i przesłanki do dalszej obróbki.
 
-Serwer to biblioteka standardowa Pythona (`ThreadingHTTPServer`). Ma nagłówek CSP i escapowanie każdego pola,
-a w `docker-compose.yml` port jest wystawiony tylko na 127.0.0.1.
+„Serwery stron” przy kampanii pokazują dostawcę (ASN) i kraj z DB-IP Lite, sprawdzane lokalnie w kontenerze.
+To tylko informacja, a nie dowód powiązania.
+
+Serwer to biblioteka standardowa Pythona (`ThreadingHTTPServer`). Ma nagłówek CSP i escapowanie każdego pola.
 
 ## Cały system
-
-`docker compose up -d` uruchamia resztę (potrzebny jest plik `.env` na wzór `.env.example`):
 
 | Usługa | Rola |
 |---|---|
 | `collector` | **Automatyczne przeszukiwanie biblioteki reklam Meta według harmonogramu.** Hasła są dobierane z zablokowanych reklam z różnych kampanii. Kolektor otwiera reklamę w Chromium (Playwright) jak użytkownik telefonu, sprawdza firmę (CEIDG, GUS REGON, biała lista VAT, VIES) i domenę (RDAP), stosuje reguły i lokalny model językowy, a wynik zapisuje w `verdicts.db`. Nie pobiera plików ze skanowanych stron. |
 | `again` | ta sama logika, która drugi raz ocenia starsze werdykty |
-| `panel` | panel weryfikacji: człowiek zatwierdza albo odrzuca decyzje z kolejki (http://127.0.0.1:8080) |
+| `panel` | panel weryfikacji: człowiek zatwierdza albo odrzuca decyzje z kolejki |
+| `kampanie` | ten demonstrator; bazę kolektora widzi tylko do odczytu |
 | `lists` | składa listy blokad z `sources.toml` i `lists/` w jedną bazę SQLite dla Blocky |
 | `blocky` | filtr DNS, który blokuje domeny oszustw |
 | `warp` | Cloudflare WARP jako proxy tylko dla stron, które odcinają adresy serwerowe |
 | `home` | przekaźnik do lokalnej Ollamy, gdy reszta działa na serwerze |
-| `prometheus`, `grafana` | metryki i pulpit (http://127.0.0.1:3000) |
+| `prometheus`, `grafana` | metryki i pulpit |
 
 `site/` to strona projektu i strona dla jury (Cloudflare Pages). Adres panelu audytora jest w niej zastąpiony
 symbolem `https://panel.example.org`.
@@ -174,12 +276,12 @@ Liczby z kopii bazy kolektora, porównane z decyzjami ludzi:
 
 | Wymaganie | Gdzie |
 |---|---|
-| grupowanie w kampanie po sygnałach tekstowych, wizualnych, semantycznych, infrastrukturalnych | `kampanie/kampanie.py` (`Base.compare`, `Base.campaigns`) |
-| duplikaty i warianty | `Base.duplicate`, sekcja „Duplikaty” w GUI |
-| nowy materiał → kampania albo nowy wzorzec | `Base.place`, formularz w GUI |
+| grupowanie w kampanie po sygnałach tekstowych, wizualnych, semantycznych, infrastrukturalnych | `kampanie/kampanie.py` (`Base.compare`, `Base.link`, `Base.campaigns`) |
+| duplikaty i warianty | `Base.duplicate`, sekcja „Duplikaty” przy kampanii |
+| nowy materiał → kampania albo nowy wzorzec | `Base.place`, sekcja „Dodaj materiał” |
 | dowody powiązań | przesłanki z siłą i zdaniem przy każdej parze, graf, eksport JSON |
 | brakujące dane | lista „czego zabrakło” przy każdym materiale; brak danych nie obniża wyniku |
-| GUI | `kampanie/app.py`, port 8501 |
+| GUI | `kampanie/app.py`, https://kampanie.grannyinternet.me/ |
 | kontener | `kampanie/Dockerfile`, usługa `kampanie` w `docker-compose.yml` |
 | bonus: biblioteki reklam i harmonogram | `collector/collector.py` (Meta Ad Library, cykle z hasłami) |
 
@@ -192,8 +294,10 @@ Kod tego repozytorium jest na licencji MIT (`LICENSE`).
 | Python 3.14 | środowisko | PSF-2.0 |
 | Pillow 12.0.0 | obrazy, dHash | MIT-CMU (HPND) |
 | scikit-learn 1.7.2 | TF-IDF, grupowanie aglomeracyjne | BSD-3-Clause |
-| NumPy (zależność scikit-learn) | obliczenia | BSD-3-Clause |
+| NumPy, SciPy (zależności scikit-learn) | obliczenia, macierze rzadkie | BSD-3-Clause |
 | tldextract 5.4.0 | domeny rejestrowalne | BSD-3-Clause |
+| maxminddb 3.3.0 | odczyt bazy DB-IP | Apache-2.0 |
+| DB-IP Lite (kraj, ASN) | dostawca i kraj serwera strony | CC BY 4.0 ([IP Geolocation by DB-IP](https://db-ip.com)) |
 | Tesseract OCR + dane pol/eng | OCR zrzutów | Apache-2.0 |
 | Playwright 1.55.0 + Chromium | otwieranie reklam w kolektorze | Apache-2.0 / BSD-3-Clause |
 | PyTorch 2.14.1 (CPU) | ModernBERT | BSD-3-Clause |
@@ -208,11 +312,48 @@ Kod tego repozytorium jest na licencji MIT (`LICENSE`).
 | Atkinson Hyperlegible Next, Libre Franklin (`site/fonts`) | fonty strony | SIL OFL 1.1 |
 
 Usługi, z których korzysta kolektor: Meta Ad Library API (warunki Meta), CEIDG API, GUS REGON (BIR), biała
-lista podatników VAT (MF), VIES (KE), RDAP (rdap.org, dns.pl). Moduł kampanii korzysta tylko z RDAP i tylko
-w trybie `ONLINE=1`.
+lista podatników VAT (MF), VIES (KE), RDAP (rdap.org, dns.pl). Moduł kampanii korzysta tylko z RDAP i ze
+wskazanej strony, i tylko w trybie `ONLINE=1`.
 
 Listy blokad są pobierane w czasie działania i nie są rozpowszechniane w repozytorium. Każda ma w
 `sources.toml` adres i licencję. Część z nich jest niekomercyjna (np. someonewhocares, MVPS) albo ma licencję
 nieznaną. Przed użyciem komercyjnym takie listy trzeba wyłączyć.
 
 Dane organizatora nie są częścią repozytorium. Wgrywa się je w przeglądarce i zostają w lokalnym wolumenie Dockera.
+
+## Ostatnia deska ratunku: uruchomienie u siebie
+
+Ta część jest potrzebna tylko wtedy, gdy https://kampanie.grannyinternet.me/ nie odpowiada.
+
+**Film z działania systemu**, nagrany, gdy wszystko działało na serwerze: _(link do uzupełnienia)_
+
+### Sam demonstrator kampanii
+
+Potrzebny jest tylko Docker.
+
+```powershell
+git clone https://github.com/miguellukasiak/grannyInternet_Hacknation2026
+cd grannyInternet_Hacknation2026
+docker compose up --build kampanie
+```
+
+Potem otwórz http://127.0.0.1:8501 (port jest wystawiony tylko na 127.0.0.1) i wgraj materiały w przeglądarce:
+pliki, cały folder albo ZIP (do 2 GB), adres strony albo sam tekst reklamy.
+
+- Tryb offline: ustaw `ONLINE=0` (PowerShell: `$env:ONLINE=0`, bash: `ONLINE=0 docker compose up --build kampanie`).
+  Wtedy nic nie wychodzi z kontenera, a wklejony adres jest tylko zapisany. Bez tej zmiennej moduł pyta RDAP
+  o wiek domen docelowych i pobiera wklejoną stronę (z blokadą adresów prywatnych).
+- Wgrane materiały i ich cechy trafiają do wolumenu `kampanie` (`/data/baza.json`). Materiał usuwa się na jego
+  stronie, całą bazę przyciskiem „Wyczyść bazę”.
+- Domeny zablokowane przez kolektor: gdy działa cały system, kontener widzi `verdicts.db` tylko do odczytu
+  (wolumen `verdicts`, zmienna `KOLEKTOR`) i pokazuje przycisk „Wczytaj zablokowane domeny”. Bez tej bazy
+  przycisku nie ma, a demonstrator pracuje na tym, co wgrasz.
+- Bez GUI: `docker compose run --rm -v "${PWD}/folder:/x:ro" kampanie python kampanie.py /x` wypisuje kampanie
+  i werdykty jako tekst (każdy podfolder to jeden materiał).
+- Testy: `docker compose run --rm --no-deps kampanie python -m unittest -v`.
+
+### Cały system
+
+`docker compose up -d` uruchamia wszystkie usługi. Potrzebny jest plik `.env` na wzór `.env.example` (token
+Meta Ad Library, klucze CEIDG i GUS, adres Ollamy). Panel weryfikacji jest wtedy pod http://127.0.0.1:8080, a pulpit Grafany
+pod http://127.0.0.1:3000.
