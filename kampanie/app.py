@@ -370,7 +370,7 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
             f'</div></div>') if state["status"] else ""
     return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<meta http-equiv="refresh" content="3">' if refresh and state["status"] else ''}
-<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=10">
+<title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=11">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
 <script src="/static/app.js?v=4" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
@@ -546,14 +546,15 @@ def campaign_of(campaigns) -> dict:
 
 
 REPORT = """<section class="sec" id="zglos" aria-labelledby="zglos-t"><div class="wrap">
-<div class="sec-head"><h2 id="zglos-t">Zgłoś podejrzaną domenę</h2><p>Wystarczy domena albo adres strony z reklamy. Jeśli
-domena już jest w bazie, zobaczysz jej decyzję i to, kto ją podjął. Nowa dostaje wstępny werdykt i miejsce w kampanii.</p></div>
+<div class="sec-head"><h2 id="zglos-t">Zgłoś podejrzaną domenę</h2><p><b>Dla każdego, kto trafił na podejrzaną reklamę.</b>
+Zgłoszenie trafia do audytorów, którzy decydują o blokadzie. Wystarczy domena albo adres strony z reklamy. Od razu
+sprawdzamy stronę na żywo i zapis w bazie: zobaczysz wstępny werdykt, a przy znanej domenie także jej decyzję i to, kto ją podjął.</p></div>
 <form class="report" method="post" action="/zglos">
 <label class="field"><span>Domena</span><input type="text" name="domena" required maxlength="2000" placeholder="np. oferta-dnia.top"
 inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
 <label class="field"><span>Co wzbudziło podejrzenie (opcjonalnie)</span><input type="text" name="uwaga" maxlength="4000"
 placeholder="Np. obiecany cudowny lek, znana osoba w reklamie" autocomplete="off"></label>{turnstile}
-<button class="btn btn-ink">Zgłoś domenę <span aria-hidden="true">→</span></button></form>{collector}</div></section>"""
+<button class="btn btn-ink">Zgłoś domenę <span aria-hidden="true">→</span></button></form></div></section>"""
 
 TURNSTILE = ('<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'  # the panel checks it
              '<div class="cf-turnstile" data-sitekey="{}" data-language="pl"></div>')
@@ -565,7 +566,8 @@ które kolektor zablokował, z reklamą, stroną, serwerami i identyfikatorami. 
 <button class="btn btn-line">Wczytaj zablokowane domeny</button></form>"""
 
 FORM = """<section class="sec" id="dodaj" aria-labelledby="dodaj-t"><div class="wrap">
-<div class="sec-head"><h2 id="dodaj-t">Dodaj materiał</h2><p>Pliki jednego incydentu dają jeden materiał. Folder albo ZIP
+<div class="sec-head"><h2 id="dodaj-t">Dodaj materiał</h2><p><b>Dla analityka: analiza materiałów, bez wysyłania do audytorów.</b>
+Wyniki zostają tutaj, w bazie i kampaniach demonstratora. Pliki jednego incydentu dają jeden materiał. Folder albo ZIP
 z podfolderami daje tyle materiałów, ile jest podfolderów. Czytamy zrzuty ekranu (OCR), zapisane strony (.html, .mhtml),
 HAR, metadane wideo (.info.json) i tekst. Wideo jest tylko odnotowane.</p></div>
 <form class="add" method="post" action="/analizuj" enctype="multipart/form-data">
@@ -574,11 +576,12 @@ HAR, metadane wideo (.info.json) i tekst. Wideo jest tylko odnotowane.</p></div>
 <div class="pick"><label class="btn btn-line btn-sm">Wybierz folder<input type="file" name="pliki" webkitdirectory multiple
 aria-label="Folder z materiałami"></label></div></div>
 <div class="fields">
-<label class="field"><span>Adres reklamy lub strony</span><input type="text" name="url" placeholder="https://" inputmode="url" autocomplete="off"></label>
-<label class="field"><span>Tekst reklamy albo inna wskazówka</span><textarea name="tekst" placeholder="Np. podpis reklamy, nazwa produktu, adres z paska"></textarea></label>
+<p class="hint">Każde z trzech jest opcjonalne: pliki, adres albo tekst. Wystarczy jedno z nich.</p>
+<label class="field"><span>Adres reklamy lub strony (opcjonalnie)</span><input type="text" name="url" placeholder="https://" inputmode="url" autocomplete="off"></label>
+<label class="field"><span>Tekst reklamy albo inna wskazówka (opcjonalnie)</span><textarea name="tekst" placeholder="Np. podpis reklamy, nazwa produktu, adres z paska"></textarea></label>
 <label class="check"><input type="checkbox" name="dodaj" value="1" checked>Zapisz w bazie. Kolejne materiały będą z nim porównywane.</label>
 <button class="btn btn-ink">Analizuj materiał <span aria-hidden="true">→</span></button>
-<p class="hint">{online}</p></div></form></div></section>"""
+<p class="hint">{online}</p></div></form>{collector}</div></section>"""
 
 
 def index(query=None) -> bytes:
@@ -602,8 +605,9 @@ def index(query=None) -> bytes:
 wstępny werdykt, a potem trafia do kampanii albo zostaje nowym wzorcem. Przy każdym powiązaniu widać, na jakiej podstawie.</p>
 {error}<dl class="stats"><div><dt>Materiały</dt><dd>{len(ms)}</dd></div><div><dt>Kampanie</dt><dd>{len(every)}</dd></div>
 <div class="hot"><dt>Wysokie ryzyko</dt><dd>{high}</dd></div><div><dt>Nowe wzorce</dt><dd>{lone}</dd></div></dl></section>"""
-    form = REPORT.format(collector=COLLECTOR if KOLEKTOR.is_file() else "", turnstile=TURNSTILE.format(e(TURNSTILE_SITE)) if TURNSTILE_SITE else "") + FORM.format(online="Adresy stron i wiek domen (RDAP) sprawdzamy w sieci. Pliki nie opuszczają kontenera."
-                       if ONLINE else "Tryb offline: nic nie opuszcza kontenera, adres strony jest tylko zapisany.")
+    form = FORM.format(online="Adresy stron i wiek domen (RDAP) sprawdzamy w sieci. Pliki nie opuszczają kontenera."
+                       if ONLINE else "Tryb offline: nic nie opuszcza kontenera, adres strony jest tylko zapisany.",
+                       collector=COLLECTOR if KOLEKTOR.is_file() else "") + REPORT.format(turnstile=TURNSTILE.format(e(TURNSTILE_SITE)) if TURNSTILE_SITE else "")
     cards = []
     for c in many[(kn - 1) * PER_CAMPS:kn * PER_CAMPS]:
         dups = ", ".join(f"{a} = {b}" for a, b in c["duplicates"])
@@ -944,9 +948,10 @@ class Handler(BaseHTTPRequestHandler):
                                                        '<p class="lead"><a href="/#zglos">Wróć do formularza</a></p></section>'), code=400)
                 sent = to_auditors(dom, form.get("uwaga", ""), form.get("cf-turnstile-response", ""),
                                    self.headers.get("Cf-Connecting-Ip", ""))
-                m, note = known(dom)
-                if not m:
-                    m = ingest({"url": f"https://{dom}/", "tekst": form.get("uwaga", "")}, [], work_dir, keep=False)[0]
+                old, note = known(dom)
+                # always fetch the live page; analyse_one merges the base record of a known domain into it
+                m = ingest({"url": f"https://{dom}/", "tekst": form.get("uwaga", "")}, [], work_dir, keep=False)[0]
+                if not old:
                     add_later(m)
                     note = SAVED
                 return self.send(material(m, note=e(" ".join(filter(None, (note, AUDITORS.get(sent)))))))

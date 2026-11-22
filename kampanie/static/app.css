@@ -280,3 +280,5 @@ tr.lone td.id { color: var(--ink-2); }
 .tf select, .tf input { width: 100%; min-width: 8em; font: 400 14px/1.3 var(--font); color: var(--ink); background: var(--card);
   border: 0; border-radius: 0; padding: 6px 8px; box-shadow: inset 0 0 0 1.5px var(--rule); }
 .tf select:focus, .tf input:focus { outline: none; box-shadow: inset 0 0 0 2.5px var(--ink); }
+/* hackathon: the jury needs materials, not the auditors' report form; remove these two rules to bring it back */
+#zglos, .nav-cta[href="/#zglos"] { display: none; }
