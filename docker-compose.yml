@@ -13,6 +13,7 @@ services:
     volumes:
       - kampanie:/data  # materials uploaded in the GUI and their extracted features
       - verdicts:/verdicts:ro  # the collector's verdicts.db: its blocked domains can be loaded as materials
+      - ./lists/pages:/strony:ro  # the collector's saved pages: a public download beside each of those domains
     restart: unless-stopped
     logging: *logging
 

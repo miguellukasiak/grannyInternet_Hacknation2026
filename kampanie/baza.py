@@ -50,6 +50,18 @@ def material(domain: str, verdict: str, reason: str, decided_by: str | None, raw
         m.trackers.append(f"numer firmy {num}")
     if ad.get("page_id"):  # one Facebook page advertising many domains: one owner
         m.trackers.append(f"strona FB {ad['page_id']}")
+    # the network around the page (collector, 22.11 on): redirects from the ad, the hosts the page asks for itself,
+    # other domains on its TLS certificate and in its CT history; shared rare ones link campaigns like any domain
+    for net in (ad.get("net") or {}).values():
+        hops = [h for h in map(k.host_of, net.get("chain") or []) if h]
+        if len(hops := [h for i, h in enumerate(hops) if i == 0 or h != hops[i - 1]]) > 1:
+            m.redirects.append(hops)
+        for dom in [*(net.get("hosts") or []), *((net.get("cert") or {}).get("names") or []),
+                    *((net.get("history") or {}).get("names") or [])]:
+            if (dom := k.domain_of(dom)) and dom not in m.domains:
+                m.domains.append(dom)
+        if names := (net.get("cert") or {}).get("names"):
+            m.sources.append("certyfikat TLS, inne domeny na nim: " + ", ".join(names))
     m.ips = sorted({ip for ips in (ad.get("ips") or {}).values() for ip in ips})
     m.ages = {d: a for d, a in (ad.get("age_days") or {}).items() if isinstance(a, int)}
     m.sources.append(f"decyzja w bazie: {verdict}, {WHO[source(decided_by, reason)]}: {reason or 'bez powodu'}")

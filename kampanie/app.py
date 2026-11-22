@@ -33,6 +33,8 @@ import kampanie as k
 BAZA = Path(os.environ.get("BAZA", "/data/baza.json"))
 ONLINE = os.environ.get("ONLINE", "1") == "1"  # RDAP ages of landing domains; 0 = nothing leaves the container
 KOLEKTOR = Path(os.environ.get("KOLEKTOR", "/verdicts/verdicts.db"))  # the collector's verdicts, mounted read-only
+# the collector's saved pages, {domain}.json.gz, mounted read-only: HTML, text, redirects, requests, certificate
+STRONY = Path(os.environ.get("STRONY", "/strony"))
 STATIC = Path(__file__).with_name("static")
 MAX_UPLOAD = 2_000_000_000  # a whole incident set with its videos; the body goes to disk, never to memory
 MAX_UNZIP, MAX_FILES = 3_000_000_000, 20_000  # a ZIP bomb stops here
@@ -747,6 +749,10 @@ def material(m, placed=None, base=None, note="", again="", wait=False) -> bytes:
             f'{"Zgłoś kolejną domenę" if again == "zglos" else "Dodaj kolejny materiał"} <span aria-hidden="true">→</span></a></p>'
             if again else "")
     note = f'<div class="notice" role="status">{note}{more}</div>' if note else ""
+    saved = (f'<p class="again"><a class="btn btn-line btn-sm" href="/strona/{e(m.id)}.json.gz" download>Pobierz stronę '
+             f'zapisaną przez kolektor</a> <span class="hint">HTML i tekst strony, przekierowania z reklamy, adresy, które '
+             f'strona odpytuje, certyfikat TLS i jego historia (.json.gz)</span></p>'
+             if m.origin == "baza kolektora" and (STRONY / f"{m.id}.json.gz").is_file() else "")
     return page(m.id, f"""<section class="wrap hero"><div class="case-head"><div><p class="eyebrow">Materiał {e(m.id)}</p>
 <h1>{e(m.name)}</h1></div><div>{stamp(m, big=True)}</div></div>{note}
 <div class="case-grid"><div class="panel"><h2>Co zwraca uwagę</h2>{flags}</div>
@@ -754,7 +760,7 @@ def material(m, placed=None, base=None, note="", again="", wait=False) -> bytes:
 <section class="sec"><div class="wrap"><div class="sec-head"><h2>Podobne materiały</h2><p>Każde powiązanie z przesłankami
 i ich siłą. Przesłanki składają się jak niezależne poszlaki: 1 − ∏(1 − siła).</p></div>{similar}</div></section>
 <section class="sec"><div class="wrap"><div class="sec-head"><h2>Wyodrębnione cechy</h2><p>To, co odczytaliśmy z plików,
-strony i tekstu. Z tych cech biorą się przesłanki.</p></div>{features(m)}{remove}</div></section>""", refresh=wait)
+strony i tekstu. Z tych cech biorą się przesłanki.</p></div>{features(m)}{saved}{remove}</div></section>""", refresh=wait)
 
 
 def graph(query=None) -> bytes:
@@ -921,9 +927,11 @@ TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf
 
 
 class Handler(BaseHTTPRequestHandler):
-    def send(self, body: bytes, ctype="text/html; charset=utf-8", code=200, cache=False):
+    def send(self, body: bytes, ctype="text/html; charset=utf-8", code=200, cache=False, file: str | None = None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        if file:  # a download, never a page the browser runs
+            self.send_header("Content-Disposition", f'attachment; filename="{file}"')
         self.send_header("Content-Length", str(len(body)))
         cf = " https://challenges.cloudflare.com" if TURNSTILE_SITE else ""  # Turnstile's script and its frame
         self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; "
@@ -961,6 +969,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(export(), "application/json; charset=utf-8")
         if path.startswith("/static/") and (f := STATIC / clean(path[8:])).is_file() and f.suffix in TYPES:
             return self.send(f.read_bytes(), TYPES[f.suffix], cache=True)
+        if (s := re.fullmatch(r"/strona/([a-z0-9.-]+\.json\.gz)", path)) and (f := STRONY / s[1]).is_file():
+            return self.send(f.read_bytes(), "application/gzip", file=s[1])
         if path.startswith("/m/") and (m := state["base"].by_id.get(path[3:])
                                        or next((x for x in pending if x.id == path[3:]), None)):
             return self.send(material(m))

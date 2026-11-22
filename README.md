@@ -395,6 +395,10 @@ pliki, cały folder albo ZIP (do 2 GB), adres strony albo sam tekst reklamy.
 - Domeny zablokowane przez kolektor: gdy działa cały system, kontener widzi `verdicts.db` tylko do odczytu
   (wolumen `verdicts`, zmienna `KOLEKTOR`) i pokazuje przycisk „Wczytaj zablokowane domeny”. Bez tej bazy
   przycisku nie ma, a demonstrator pracuje na tym, co wgrasz.
+- Strony zapisane przez kolektor: `lists/pages` zamontowany tylko do odczytu jako `/strony` (zmienna `STRONY`).
+  Przy domenie z bazy kolektora strona materiału ma wtedy przycisk „Pobierz stronę zapisaną przez kolektor”:
+  HTML i tekst strony, przekierowania z reklamy, adresy, które strona odpytuje, certyfikat TLS i jego historia
+  w logach Certificate Transparency (`.json.gz`).
 - Bez GUI: `docker compose run --rm -v "${PWD}/folder:/x:ro" kampanie python kampanie.py /x` wypisuje kampanie
   i werdykty jako tekst (każdy podfolder to jeden materiał).
 - Testy: `docker compose run --rm --no-deps kampanie python -m unittest -v`.

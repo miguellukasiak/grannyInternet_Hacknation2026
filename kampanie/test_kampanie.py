@@ -284,7 +284,9 @@ class Collector(unittest.TestCase):
         import app
         import baza
         ad = {"ad_creative_bodies": ["Lekarze ukrywają ten cudowny lek na żylaki!"], "trackers": {"a.top": ["fb:123", "GTM-XXXXXX"]},
-              "page_id": "77", "ips": {"a.top": ["203.0.113.5"]}, "age_days": {"a.top": 9}}
+              "page_id": "77", "ips": {"a.top": ["203.0.113.5"]}, "age_days": {"a.top": 9},
+              "net": {"a.top": {"chain": ["https://go.cloak.io/c?x=1", "https://go.cloak.io/d", "https://a.top/p"],
+                                "hosts": ["panel.crm.ru"], "cert": {"names": ["b.top"]}, "history": {"names": ["c.top"]}}}}
         with tempfile.TemporaryDirectory() as d:
             db = sqlite3.connect(path := f"{d}/verdicts.db")
             db.execute("CREATE TABLE verdicts (domain, verdict, reason, decided_by, ad, seen_at, decided_at)")
@@ -300,6 +302,15 @@ class Collector(unittest.TestCase):
         a = found[1][1]
         self.assertEqual(a.trackers, ["piksel Meta 123", "strona FB 77"])  # the GTM placeholder is no ID
         self.assertEqual((a.ips, a.ages), (["203.0.113.5"], {"a.top": 9}))
+        self.assertEqual(a.redirects, [["go.cloak.io", "a.top"]])  # the collector's network: redirects from the ad,
+        self.assertEqual(a.domains, ["crm.ru", "b.top", "c.top"])  # hosts it asks, domains on its certificate
+        with tempfile.TemporaryDirectory() as d:  # the saved page, a public download beside the material
+            app.STRONY = Path(d)
+            self.assertNotIn("/strona/a.top.json.gz", app.material(a, placed={"campaign": None, "fit": {}, "similar": []},
+                                                                   base=k.Base([a])).decode())
+            (Path(d) / "a.top.json.gz").write_bytes(b"x")
+            self.assertIn('href="/strona/a.top.json.gz" download', app.material(
+                a, placed={"campaign": None, "fit": {}, "similar": []}, base=k.Base([a])).decode())
         self.assertGreaterEqual(k.verdict(a)[1], 2)
         app.state["base"] = k.Base([m for _, m in found])
         m, note = app.known("a.top")
@@ -508,6 +519,17 @@ class Paging(unittest.TestCase):
             self.assertIn('href="/#dodaj">Dodaj kolejny materiał', body)
             c.request("GET", "/wynik/nie-ma"); r3 = c.getresponse(); r3.read()
             self.assertEqual(r3.status, 404)
+            with tempfile.TemporaryDirectory() as d:  # the collector's saved page: a download, nothing outside its folder
+                app.STRONY = Path(d) / "strony"
+                app.STRONY.mkdir()
+                (app.STRONY / "a.top.json.gz").write_bytes(b"gz")
+                (Path(d) / "tajne.json.gz").write_bytes(b"no")
+                c.request("GET", "/strona/a.top.json.gz"); r4 = c.getresponse()
+                self.assertEqual((r4.status, r4.read(), r4.getheader("Content-Disposition")),
+                                 (200, b"gz", 'attachment; filename="a.top.json.gz"'))
+                for bad in ("/strona/..%2Ftajne.json.gz", "/strona/../tajne.json.gz", "/strona/b.top.json.gz"):
+                    c.request("GET", bad); r5 = c.getresponse(); r5.read()
+                    self.assertEqual(r5.status, 404, bad)
         finally:
             c.close()
             srv.shutdown()
