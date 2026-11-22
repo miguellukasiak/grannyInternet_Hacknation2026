@@ -287,39 +287,86 @@ Liczby z kopii bazy kolektora, porównane z decyzjami ludzi:
 
 ## Komponenty zewnętrzne i licencje
 
-Kod tego repozytorium jest na licencji MIT (`LICENSE`).
+Kod tego repozytorium jest na licencji MIT (`LICENSE`). Niżej wszystko, czego używamy, a czego nie napisaliśmy:
+biblioteki, modele, obrazy, usługi i dane, z licencją, ograniczeniami i sposobem uzyskania dostępu.
+Graf, interfejs demonstratora i panel to nasz kod, bez zewnętrznych bibliotek JS.
 
-| Komponent | Do czego | Licencja |
-|---|---|---|
-| Python 3.14 | środowisko | PSF-2.0 |
-| Pillow 12.0.0 | obrazy, dHash | MIT-CMU (HPND) |
-| scikit-learn 1.7.2 | TF-IDF, grupowanie aglomeracyjne | BSD-3-Clause |
-| NumPy, SciPy (zależności scikit-learn) | obliczenia, macierze rzadkie | BSD-3-Clause |
-| tldextract 5.4.0 | domeny rejestrowalne | BSD-3-Clause |
-| maxminddb 3.3.0 | odczyt bazy DB-IP | Apache-2.0 |
-| DB-IP Lite (kraj, ASN) | dostawca i kraj serwera strony | CC BY 4.0 ([IP Geolocation by DB-IP](https://db-ip.com)) |
-| Tesseract OCR + dane pol/eng | OCR zrzutów | Apache-2.0 |
-| Playwright 1.55.0 + Chromium | otwieranie reklam w kolektorze | Apache-2.0 / BSD-3-Clause |
-| PyTorch 2.14.1 (CPU) | ModernBERT | BSD-3-Clause |
-| Transformers 5.22.1 | ModernBERT | Apache-2.0 |
-| OPI-PIB/pl-ModernBERT-512-base | druga opinia o reklamie | Apache-2.0 |
-| Ollama | lokalny model językowy | MIT |
-| qwen3.5:4b | ocena reklam w kolektorze | Apache-2.0 |
-| Blocky v0.35.0 | filtr DNS | Apache-2.0 |
-| Prometheus v3.5.0 | metryki | Apache-2.0 |
-| Grafana 12.1.0 | pulpit | AGPL-3.0 |
-| Cloudflare WARP | proxy dla kolektora | własnościowa (warunki Cloudflare) |
-| Atkinson Hyperlegible Next, Libre Franklin (`site/fonts`) | fonty strony | SIL OFL 1.1 |
+### Biblioteki i narzędzia
 
-Usługi, z których korzysta kolektor: Meta Ad Library API (warunki Meta), CEIDG API, GUS REGON (BIR), biała
-lista podatników VAT (MF), VIES (KE), RDAP (rdap.org, dns.pl). Moduł kampanii korzysta tylko z RDAP i ze
-wskazanej strony, i tylko w trybie `ONLINE=1`.
+| Komponent | Do czego | Licencja | Ograniczenia |
+|---|---|---|---|
+| Python 3.14 (obraz `python:3.14-slim`, Debian) | środowisko | PSF-2.0; pakiety Debiana na własnych licencjach | brak |
+| SQLite (moduł `sqlite3` Pythona) | bazy werdyktów i list | domena publiczna | brak |
+| Pillow 12.0.0 | obrazy, dHash | MIT-CMU (HPND) | brak |
+| scikit-learn 1.7.2 | TF-IDF, grupowanie aglomeracyjne | BSD-3-Clause | brak |
+| NumPy, SciPy (zależności scikit-learn) | obliczenia, macierze rzadkie | BSD-3-Clause | brak |
+| tldextract 5.4.0 + Public Suffix List | domeny rejestrowalne | BSD-3-Clause; lista: MPL-2.0 | brak |
+| maxminddb 3.3.0 | odczyt bazy DB-IP | Apache-2.0 | brak |
+| Tesseract OCR + dane `pol`, `eng` (pakiety Debiana) | OCR zrzutów | Apache-2.0 | brak |
+| Playwright 1.55.0 | sterowanie przeglądarką w kolektorze | Apache-2.0 | brak |
+| Chromium (pobierany przez Playwright) | otwieranie reklam i stron | BSD-3-Clause + licencje składników | brak |
+| Xvfb, xauth (Debian) | ekran dla Chromium bez trybu headless | MIT/X11 | brak |
+| PyTorch 2.14.1 (CPU) | ModernBERT | BSD-3-Clause | brak |
+| Transformers 5.22.1 | ModernBERT | Apache-2.0 | brak |
+| Ollama | uruchamianie lokalnego modelu | MIT | brak |
+| Blocky v0.35.0 (`ghcr.io/0xerr0r/blocky`) | filtr DNS | Apache-2.0 | brak |
+| Prometheus v3.5.0 (`prom/prometheus`) | metryki | Apache-2.0 | brak |
+| Grafana 12.1.0 (`grafana/grafana`) | pulpit | AGPL-3.0 | używana bez zmian; zmieniona i wystawiona w sieci wymagałaby udostępnienia kodu zmian |
+| Debian bookworm-slim, socat, curl, gpg (obraz `warp`) | proxy WARP | licencje Debiana (socat GPL-2.0, curl licencja curl, gpg GPL-3.0) | brak |
+| Cloudflare WARP (`cloudflare-warp`) | proxy kolektora dla stron, które odcinają adresy serwerowe | własnościowa | [warunki Cloudflare](https://www.cloudflare.com/application/terms/); darmowy plan, bez konta |
+| Atkinson Hyperlegible Next (Braille Institute), Libre Franklin (`site/fonts`) | fonty strony i demonstratora | SIL OFL 1.1 (`site/fonts/OFL.txt`) | fontów nie wolno sprzedawać osobno |
+| Archivo, JetBrains Mono, Newsreader (Google Fonts) | fonty panelu weryfikacji | SIL OFL 1.1 | ładowane z serwerów Google, które widzą adres IP przeglądarki |
 
-Listy blokad są pobierane w czasie działania i nie są rozpowszechniane w repozytorium. Każda ma w
-`sources.toml` adres i licencję. Część z nich jest niekomercyjna (np. someonewhocares, MVPS) albo ma licencję
-nieznaną. Przed użyciem komercyjnym takie listy trzeba wyłączyć.
+### Modele
 
-Dane organizatora nie są częścią repozytorium. Wgrywa się je w przeglądarce i zostają w lokalnym wolumenie Dockera.
+| Model | Do czego | Licencja | Ograniczenia |
+|---|---|---|---|
+| qwen3.5:4b (Qwen, Alibaba; przez Ollamę) | ocena reklam w kolektorze | Apache-2.0 | brak; pobierany przez `ollama pull`, bez konta |
+| OPI-PIB/pl-ModernBERT-512-base (Hugging Face) | wektory tekstu reklamy (model zamrożony, na nich regresja logistyczna) | Apache-2.0 | brak; wagi pobrane raz z Hugging Face bez konta, potem tylko z wolumenu (`HF_HUB_OFFLINE`) |
+| klasyfikator słów (TF-IDF + regresja logistyczna, scikit-learn) | ocena reklam w kolektorze | nasz, MIT | uczony na naszych decyzjach, nie jest rozpowszechniany |
+
+Demonstrator kampanii nie używa żadnego modelu językowego.
+
+### Usługi i API
+
+W repozytorium nie ma żadnych kluczy. Każdy klucz jest opcjonalny: bez niego dana funkcja się wyłącza, a reszta
+działa. Nazwy zmiennych są w `.env.example`. Do oceny wystarczy demonstrator na https://kampanie.grannyinternet.me/
+albo uruchomiony u siebie (niżej), który nie potrzebuje żadnego klucza.
+
+| Usługa | Do czego | Dostęp | Ograniczenia |
+|---|---|---|---|
+| Meta Ad Library API (`graph.facebook.com`) | wyszukiwanie reklam w kolektorze | konto Facebook z potwierdzoną tożsamością ([facebook.com/ID](https://www.facebook.com/ID)), aplikacja na developers.facebook.com, token z Graph API Explorer → `META_TOKEN` | [warunki platformy Meta](https://developers.facebook.com/terms/), limity zapytań; token wygasa |
+| CEIDG API (`dane.biznes.gov.pl`) | status, data startu i branża jednoosobowej firmy | darmowy token po zgłoszeniu na dane.biznes.gov.pl → `CEIDG_TOKEN` | limity zapytań; dane jawne z rejestru |
+| GUS REGON, BIR 1.1 (`wyszukiwarkaregon.stat.gov.pl`) | dane firmy po NIP | darmowy klucz zamawiany w GUS → `GUS_KEY`; GUS ma też środowisko testowe z publicznym kluczem | warunki GUS |
+| Biała lista podatników VAT (`wl-api.mf.gov.pl`) | status VAT i rachunki firmy | bez klucza | dzienny limit wyszukiwań MF |
+| KRS API (`api-krs.ms.gov.pl`) | odpis spółki z KRS | bez klucza | dane jawne z rejestru |
+| VIES (`ec.europa.eu`) | numer VAT z UE | bez klucza | limity Komisji Europejskiej |
+| RDAP (IANA bootstrap, `rdap.org`, `rdap.dns.pl`, rejestry) | wiek i rejestrator domeny | bez klucza | limity rejestrów; w demonstratorze tylko przy `ONLINE=1` |
+| Cloudflare Turnstile | ochrona formularzy (demonstrator, zgłoszenia, odwołania) | darmowe klucze strony i sekretu z panelu Cloudflare → `TURNSTILE_SITE`, `TURNSTILE_SECRET` | bez kluczy formularze działają bez tej ochrony |
+| Cloudflare Pages, Tunnel, Access | hosting strony, dostęp do demonstratora i panelu | darmowe konto Cloudflare | [warunki Cloudflare](https://www.cloudflare.com/website-terms/); niepotrzebne przy uruchomieniu u siebie |
+| Resend (`api.resend.com`) | potwierdzenia mailowe zgłoszeń i odwołań | darmowe konto, klucz API → `RESEND_KEY`, domena nadawcy potwierdzona rekordami DNS | 100 maili dziennie w darmowym planie |
+| ntfy.sh | powiadomienie na telefon o zgłoszeniu | bez konta, nazwa tematu → `NTFY_TOPIC` | temat czyta każdy, kto zna jego nazwę |
+| Quad9, Cloudflare 1.1.1.1 for Families | serwery DNS, do których Blocky przekazuje niezablokowane zapytania | bez klucza | warunki operatorów |
+| YouTube | film z działania systemu | publiczny link | warunki YouTube |
+
+### Dane i ich pochodzenie
+
+| Dane | Skąd | Licencja | Ograniczenia |
+|---|---|---|---|
+| reklamy z biblioteki Meta | Meta Ad Library API | warunki Meta | nie ma ich w repozytorium; zostają w bazie kolektora |
+| DB-IP Lite (kraj, ASN) | [db-ip.com](https://db-ip.com), pobierane przy budowaniu obrazu `kampanie` | CC BY 4.0 | wymaga wzmianki „IP Geolocation by DB-IP”; jest przy „Serwerach stron” w demonstratorze |
+| Tranco top 1M | [tranco-list.eu](https://tranco-list.eu) | bezpłatna; autorzy proszą o cytowanie (Le Pochat i in., NDSS 2019) | brak |
+| zakresy adresów AWS | `ip-ranges.amazonaws.com` | publiczny plik AWS | brak |
+| nowo zarejestrowane domeny (NRD) | [HaGeZi NRD](https://github.com/hagezi/nrd) przez jsDelivr | GPL-3.0 | brak |
+| lista ostrzeżeń CERT Polska | `hole.cert.pl` | CERT Polska: dowolny cel | CERT prosi o pobieranie nie częściej niż co 5 minut |
+| pozostałe listy blokad | adresy w `sources.toml` | licencja każdej listy w `sources.toml` | niżej |
+| statystyki na stronie projektu | NBP, CERT Polska (raport 2025), badanie Banku Pocztowego | źródła podlinkowane przy liczbach | cytowane, nie kopiowane |
+| dane organizatora | wyzwanie Hack Nation 2026 | warunki organizatora | tylko na potrzeby wyzwania; nie ma ich w repozytorium (`dane/` w `.gitignore`), wgrywa się je w przeglądarce i zostają w lokalnym wolumenie Dockera |
+
+Listy blokad są pobierane w czasie działania i nie są rozpowszechniane w repozytorium. Większość jest na GPL-3.0,
+MIT, MPL-2.0, Apache-2.0 albo CC BY(-SA). Listy niekomercyjne (someonewhocares, MVPS, certyficateit, StevenBlack,
+hBlock) są wyłączone (`enabled = false`). Część list ma licencję „nieznana” albo „brak”: używamy ich w projekcie
+niekomercyjnym, a przed użyciem komercyjnym trzeba to wyjaśnić z autorami albo te listy wyłączyć.
 
 ## Ostatnia deska ratunku: uruchomienie u siebie
 
