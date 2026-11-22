@@ -749,10 +749,11 @@ def material(m, placed=None, base=None, note="", again="", wait=False) -> bytes:
             f'{"Zgłoś kolejną domenę" if again == "zglos" else "Dodaj kolejny materiał"} <span aria-hidden="true">→</span></a></p>'
             if again else "")
     note = f'<div class="notice" role="status">{note}{more}</div>' if note else ""
-    saved = (f'<p class="again"><a class="btn btn-line btn-sm" href="/strona/{e(m.id)}.json.gz" download>Pobierz stronę '
-             f'zapisaną przez kolektor</a> <span class="hint">HTML i tekst strony, przekierowania z reklamy, adresy, które '
-             f'strona odpytuje, certyfikat TLS i jego historia (.json.gz)</span></p>'
-             if m.origin == "baza kolektora" and (STRONY / f"{m.id}.json.gz").is_file() else "")
+    # by the page's domain, not the material's origin: a domain sent on /zglos is walked by the collector too
+    dom = next((d for d in m.landing if re.fullmatch(r"[a-z0-9.-]+", d) and (STRONY / f"{d}.json.gz").is_file()), None)
+    saved = (f'<p class="again"><a class="btn btn-line btn-sm" href="/strona/{dom}.json.gz" download>Pobierz stronę '
+             f'{dom} zapisaną przez kolektor</a> <span class="hint">HTML i tekst strony, przekierowania z reklamy, adresy, '
+             f'które strona odpytuje, certyfikat TLS i jego historia (.json.gz)</span></p>' if dom else "")
     return page(m.id, f"""<section class="wrap hero"><div class="case-head"><div><p class="eyebrow">Materiał {e(m.id)}</p>
 <h1>{e(m.name)}</h1></div><div>{stamp(m, big=True)}</div></div>{note}
 <div class="case-grid"><div class="panel"><h2>Co zwraca uwagę</h2>{flags}</div>

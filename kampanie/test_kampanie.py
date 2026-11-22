@@ -311,6 +311,9 @@ class Collector(unittest.TestCase):
             (Path(d) / "a.top.json.gz").write_bytes(b"x")
             self.assertIn('href="/strona/a.top.json.gz" download', app.material(
                 a, placed={"campaign": None, "fit": {}, "similar": []}, base=k.Base([a])).decode())
+            sent = k.Material(id="zgloszenie", name="a.top", origin="dodane", landing=["a.top"])  # sent on /zglos
+            self.assertIn('href="/strona/a.top.json.gz" download', app.material(
+                sent, placed={"campaign": None, "fit": {}, "similar": []}, base=k.Base([sent])).decode())
         self.assertGreaterEqual(k.verdict(a)[1], 2)
         app.state["base"] = k.Base([m for _, m in found])
         m, note = app.known("a.top")
