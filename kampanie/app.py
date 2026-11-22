@@ -429,7 +429,7 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
 <meta name="viewport" content="width=device-width,initial-scale=1">{'<noscript><meta http-equiv="refresh" content="3"></noscript>' if wait else ''}
 <title>{e(title)} · grannyInternet</title><link rel="stylesheet" href="/static/app.css?v=13">
 <link rel="preload" href="/static/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
-<script src="/static/app.js?v=7" defer></script></head>
+<script src="/static/app.js?v=8" defer></script></head>
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
 <header class="wrap top"><a class="mark" href="/"><i></i>grannyInternet <span>/ kampanie</span></a>
 <nav aria-label="Główna">{nav("/#kampanie", "Kampanie", "k")}{nav("/#materialy", "Materiały", "m")}{nav("/graf", "Graf powiązań", "g")}

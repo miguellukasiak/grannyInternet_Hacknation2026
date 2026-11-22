@@ -51,17 +51,29 @@ document.querySelectorAll("form.add").forEach((f) => f.addEventListener("submit"
       location.hash = "kampanie"; location.reload();  // a set of materials: the page shows how far it got
     } else location.href = to.pathname === "/" ? "/#kampanie" : to.href;
   };
-  x.onerror = () => {
+  const fail = (why) => {
     head.textContent = "Nie udało się wysłać";
     bar.remove();
-    msg.textContent = "Połączenie przerwało się. Pliki nie zostały zapisane, spróbuj jeszcze raz.";
+    msg.textContent = why;
     const close = Object.assign(document.createElement("button"), { className: "btn btn-ink btn-sm", textContent: "Zamknij" });
     close.onclick = () => { d.remove(); b.disabled = false; b.firstChild.textContent = label; };
     d.append(close);
     close.focus();
   };
-  x.open("POST", f.action);
-  x.send(new FormData(f));
+  x.onerror = () => fail("Połączenie przerwało się. Pliki nie zostały zapisane, spróbuj jeszcze raz.");
+  (async () => {  // copies read now: a file changed or locked since it was picked stopped the browser with no word why (22.11)
+    const fd = new FormData();
+    for (const [k, v] of new FormData(f)) {
+      if (!(v instanceof File) || !v.name) { fd.append(k, v); continue; }
+      const name = v.webkitRelativePath || v.name;
+      try { fd.append(k, new Blob([await v.arrayBuffer()], { type: v.type }), name); } catch {
+        return fail(`Nie da się odczytać pliku ${name}: zmienił się po wybraniu albo jest otwarty w innym programie `
+          + "(np. wciąż się pobiera). Zamknij go albo poczekaj i wybierz folder jeszcze raz.");
+      }
+    }
+    x.open("POST", f.action);
+    x.send(fd);
+  })();
 }));
 }
 addEventListener("pageshow", () => document.querySelectorAll("dialog.upload").forEach((d) => d.remove()));  // back button
