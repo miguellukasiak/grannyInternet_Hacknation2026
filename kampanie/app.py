@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from collections import Counter, deque
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
@@ -200,6 +200,20 @@ def new_id(name: str, taken: set) -> str:
     return out
 
 
+def absorb(m: k.Material, old: k.Material):
+    """What the base already knows about the domain (the ad's text, where the ad really leads) joins a fresh look:
+    a page fetched today may show a plain shop while the ad sent people elsewhere."""
+    for f in fields(k.Material):
+        a, b = getattr(m, f.name), getattr(old, f.name)
+        if isinstance(a, list):
+            a += [x for x in b if x not in a]
+        elif isinstance(a, dict):
+            a.update({x: v for x, v in b.items() if x not in a})
+    m.text = f"{m.text}\n{old.text}".strip()
+    m.title = m.title or old.title
+    m.sources.append(f"zapis z bazy o {old.name}")
+
+
 def analyse_one(m: k.Material, files: list[tuple[str, Path]], root: Path, form: dict) -> k.Material:
     paths = []
     for rel, p in files:
@@ -217,6 +231,8 @@ def analyse_one(m: k.Material, files: list[tuple[str, Path]], root: Path, form: 
         except Exception as err:  # the page is gone or refuses: its address still says something
             m.missing.append(f"strona {url}: niedostępna ({err.__class__.__name__}: {str(err)[:120]})")
             k.add_url(m, url, landing=True)
+        if old := known(k.domain_of(k.host_of(url)) or "")[0]:
+            absorb(m, old)
     if text := form.get("tekst", "").strip():
         k.add_text(m, text)
         for dom in k.DOMAIN_TEXT.findall(text.lower()):  # an address in the ad's caption is where it leads
@@ -437,7 +453,8 @@ def where_is(ip: str):
 
 def stamp(m, big=False) -> str:
     _, points = k.verdict(m)
-    cls, text = ("hi", "Wysokie ryzyko") if points >= 4 else ("mid", "Podejrzane") if points >= 2 else ("ok", "Brak sygnałów")
+    cls, text = ("hi", "Wysokie ryzyko") if points >= 4 else ("mid", "Podejrzane") if points >= 2 else \
+        ("ok", "Słaby sygnał") if points else ("ok", "Brak sygnałów")
     return f'<span class="stamp {cls}{" stamp-big" if big else ""}">{text}</span><span class="pts">{points} pkt</span>'
 
 
@@ -475,7 +492,7 @@ def by_topic(query, campaigns: list, where: str, anchor: str = "") -> tuple[list
 
 
 COLS = ("fm", "fw", "fk", "fd", "fo", "ft", "fb")  # the material table's column filters, in column order
-LEVELS = {"hi": "Wysokie ryzyko", "mid": "Podejrzane", "ok": "Brak sygnałów"}
+LEVELS = {"hi": "Wysokie ryzyko", "mid": "Podejrzane", "low": "Słaby sygnał", "ok": "Brak sygnałów"}
 OPTIONS = 150  # shortcut: only the most common people and brands are listed, a search field if the full base needs more
 
 
@@ -483,7 +500,7 @@ def mat_filter(query, ms, where, pts) -> tuple[list, str, str]:
     """Like Excel's column filters: the materials that pass, the filter row of the table head and the form line over it."""
     q = {x: (query or {}).get(x, [""])[0].strip()[:200] for x in COLS}
     camp = lambda m: c["id"] if (c := where.get(m.id)) and len(c["members"]) > 1 else "nowy"
-    level = lambda m: "hi" if pts.get(m.id, 0) >= 4 else "mid" if pts.get(m.id, 0) >= 2 else "ok"
+    level = lambda m: (lambda p: "hi" if p >= 4 else "mid" if p >= 2 else "low" if p else "ok")(pts.get(m.id, 0))
     test = {"fm": lambda m, v: v.lower() in f"{m.id} {m.name}".lower(),
             "fw": lambda m, v: level(m) == v,
             "fk": lambda m, v: camp(m) == v or (v == "w" and camp(m) != "nowy"),

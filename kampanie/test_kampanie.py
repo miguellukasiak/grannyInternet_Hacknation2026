@@ -165,6 +165,57 @@ class Campaigns(unittest.TestCase):
         self.assertTrue({"zestaw", "pliki"} <= set(kinds))
         self.assertGreaterEqual(base.link(x, y), k.LINK)
 
+    def test_shared_marks_link_shops(self):
+        """22.11 base: one generated link word, one e-mail and one unusual robots.txt on shops of one owner."""
+        robots = "User-agent: *\nDisallow: /gservice/\nDisallow: /service/\nDisallow: /checkout/\nSitemap: https://{}/s.xml"
+
+        def shop(folder: Path, dom: str, text: str):
+            folder.mkdir()
+            (folder / "s.html").write_text(
+                f"<!-- saved from url=(0080)https://{dom}/index/detail.html?sno=&coll_id=7&cskpopsybriyibc=9&opt_id= -->"
+                f"<html><p>{text}</p><a href='mailto:Obsluga.Sklepu@gmail.com'>kontakt</a>"
+                f"<script>Sentry.init({{dsn:'x@o1.ingest.sentry.io'}})</script></html>", encoding="utf-8")
+            (folder / "robots.txt").write_text(robots.format(dom))
+            return k.from_folder(folder)
+
+        with tempfile.TemporaryDirectory() as t:
+            x = shop(Path(t) / "x", "bangzli.com", "Buty sportowe, wyprzedaż dziś.")
+            y = shop(Path(t) / "y", "dornsek.com", "Kurtka zimowa i czapka w zestawie.")
+        self.assertEqual(x.marks, y.marks)  # the Sitemap line names the site: left out, so the files are one
+        self.assertEqual(sorted(m.split(" #")[0] for m in x.marks), ["e-mail", "robots.txt", "słowo w linku"])
+        self.assertNotIn("obsluga", " ".join(x.marks).lower())  # hashed: no e-mail or token in clear
+        self.assertIn("GET /index/detail.html?coll_id", x.kit)
+        base = k.Base([x, y])
+        self.assertTrue({"słowo w linku", "robots.txt", "e-mail", "zestaw"} <= {kind for _, kind, _ in base.compare(x, y)[1]})
+        self.assertGreaterEqual(base.link(x, y), k.LINK)
+        self.assertTrue(k.generated("csupzpzygjirirc") and k.generated("ctnptptygwijrwc"))
+        self.assertFalse(any(map(k.generated, ["affiliateid", "trackingcode", "fbclid", "utm_campaign", "orderref"])))
+        for plain in ("User-agent: *\nDisallow: /", "User-agent: *\nDisallow: /wp-admin/\nAllow: /wp-admin/a.php\nDisallow: /x"):
+            k.add_robots(z := k.Material(id="z", name="z"), plain)
+            self.assertEqual(z.marks, [])
+
+    def test_page_tells_are_flags(self):
+        m = k.Material(id="t", name="t")
+        k.add_robots(m, "User-agent: *\nDisallow: /")
+        k.add_url(m, "https://tani-sklep.com/aB3xY9q", landing=True)
+        k.add_url(m, "https://tani-sklep.com/x?name=%D0%98%D0%BC%D1%8F")
+        k.add_html(m, "<html><body><script>var s='WYŁĄCZONY'</script></body></html>")
+        k.add_text(m, "Cena：99 zł. Pierwszych 500 klientów otrzyma podwójne zamówienie, zamów już dziś")
+        k.finish(m)
+        why = " | ".join(w for _, w in k.flags(m))
+        for part in ("Disallow", "tokenu", "WYŁĄCZONY", "Cyrylica", "Chiński dwukropek", "pierwszych 500 klient"):
+            self.assertIn(part, why)
+        self.assertEqual(k.verdict(m)[0], "wysokie ryzyko: wygląda na oszustwo")
+        plain = k.Material(id="p", name="p")
+        for url in ("https://sklep.pl/kontakt", "https://sklep.pl/produkty/", "https://sklep.pl/"):
+            k.add_url(plain, url, landing=True)
+        k.add_text(plain, "中文：这是一个中文网站，没有波兰语")
+        k.finish(plain)
+        self.assertEqual(plain.hints, [])
+        self.assertEqual(k.flags(plain), [])
+        k.add_text(one := k.Material(id="o", name="o"), "Gotówka przy odbiorze, tylko dziś!")
+        self.assertEqual(k.verdict(k.finish(one)), ("słaby sygnał", 1))
+
     def test_private_url_refused(self):
         with self.assertRaises(ValueError):
             k.fetch(k.Material(id="p", name="p"), "http://127.0.0.1:8501/")

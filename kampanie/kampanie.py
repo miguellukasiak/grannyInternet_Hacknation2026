@@ -144,7 +144,8 @@ TOPICS = {  # stems; two different ones make the topic
     "loteria / nagroda": ["nagrod", "loteri", "gratulacj", "konkurs", "wylosowa"],
 }
 URGENCY = re.compile(r"tylko dziś|tylko dzisiaj|ostatni\w* (?:miejsc|szt|dzień|szans)|zostało (?:tylko )?\d+|"
-                     r"limitowan|pośpiesz|do północy|ograniczon\w* (?:liczb|czas|ofert)|oferta wygasa|nie czekaj",
+                     r"limitowan|pośpiesz|do północy|ograniczon\w* (?:liczb|czas|ofert)|oferta wygasa|nie czekaj|"
+                     r"pierwsz\w* \d+ (?:klient|osób|os\.|zamówie|kupując)",
                      re.I)
 MIRACLE = re.compile(r"\bcud|100\s?%|gwarant|lekarze (?:nie|ukrywa)|bez recepty|raz na zawsze|w \d+ dni", re.I)
 CHEAP_TLDS = {"live", "xyz", "icu", "pro", "life", "top", "shop", "online", "site", "click", "store", "buzz",
@@ -152,6 +153,28 @@ CHEAP_TLDS = {"live", "xyz", "icu", "pro", "life", "top", "shop", "online", "sit
 DOMAIN_TEXT = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b", re.I)
 WORDS = re.compile(r"[^\W\d_]+")
 SAVED_FROM = re.compile(r"<!-- saved from url=\(\d+\)(\S+?) -->")
+# Marks shared by pages of one owner, checked on our base 22.11 (distinct landing sites, blocked : passed):
+# a generated link-parameter name 62:0 (16 groups, none mixed), one e-mail on 125 blocked sites but some
+# agency/hosting groups mixed, one unusual robots.txt 183:0. Value -> strength; stored hashed (scammers' tokens,
+# possibly a person's e-mail).
+MARKS = {"słowo w linku": 0.85, "robots.txt": 0.6, "e-mail": 0.45}
+EMAIL = re.compile(r"[A-Za-z0-9._%+-]{2,64}@[A-Za-z0-9.-]{2,80}\.[A-Za-z]{2,12}")
+EMAIL_JUNK = re.compile(r"example\.|sentry|wixpress|domain\.com|email\.com|yourdomain|\.(png|jpe?g|webp|svg|gif)$|"
+                        r"@[23]x|u00|mysite|^(test|name|user)@|ingest\.", re.I)
+REAL_PARAM = re.compile(r"campaign|source|medium|content|redirect|callback|product|collection|category|language|"
+                        r"currency|referrer|timestamp|session|tracking|variant|utm|click|landing|offer|pixel|adset|"
+                        r"placement|keyword|affiliate")
+# One page's own tells, not shared with anyone: points and the reason shown. Checked 22.11 on distinct landing sites
+# (blocked : passed): bare robots.txt 526:4, the ad link to a random token 481:6 (both together 342:1),
+# "WYŁĄCZONY" in the code 136:5, Cyrillic in a link parameter 14:0. A Chinese colon in Polish text (87:0) is in flags().
+HINTS = {"goły robots.txt": (1, "robots.txt zamyka całą stronę przed wyszukiwarkami (sam „Disallow: /”)"),
+         "token w linku": (1, "Adres prowadzi do losowego tokenu, np. /aBc12XyZ (system podmiany stron)"),
+         "WYŁĄCZONY": (1, "W kodzie strony zostało słowo „WYŁĄCZONY” (przełącznik szablonu oszustów)"),
+         "cyrylica w linku": (2, "Cyrylica w parametrze linku strony")}
+TOKEN_PATH = re.compile(r"/([A-Za-z0-9]{5,16})/?")
+CYRILLIC = re.compile(r"[Ѐ-ӿ]")
+# a shop platform's or CMS's own robots.txt is on thousands of unrelated sites (WordPress 101:48, WooCommerce 99:50)
+PLATFORM_ROBOTS = re.compile(r"wp-|woocommerce|content-signal|lightbox|/checkouts/|shopify", re.I)
 _persons = {name: re.compile(stem) for name, stem in PERSONS.items()}
 _brands = {name: re.compile(r"(?<![\w.])" + re.escape(name.lower()) + r"(?![\w])") for name in BRANDS}
 
@@ -179,6 +202,8 @@ class Material:
     forms: list = field(default_factory=list)  # input fields
     kit: list = field(default_factory=list)  # "POST /api/v1/trigger/field/*/": the page's own API, the backend kit
     files: list = field(default_factory=list)  # "sha1 name" of the page's own CSS/JS: the same file, the same author
+    marks: list = field(default_factory=list)  # "e-mail #1a2b3c4d (gmail.com)", see MARKS
+    hints: list = field(default_factory=list)  # one page's own tells for flags(), keys of HINTS
     ages: dict = field(default_factory=dict)  # domain -> days since registration (RDAP)
     sources: list = field(default_factory=list)  # what was read
     missing: list = field(default_factory=list)  # what could not be read: no evidence, not counter-evidence
@@ -264,6 +289,38 @@ def asset_name(url: str) -> str:
 
 def add_text(m: Material, text: str):
     m.text = (m.text + "\n" + text).strip()
+    add_emails(m, text)
+
+
+def add_mark(m: Material, kind: str, value: str, note: str):
+    if (item := f"{kind} #{hashlib.sha1(value.encode()).hexdigest()[:8]} ({note})") not in m.marks:
+        m.marks.append(item)
+
+
+def add_emails(m: Material, raw: str):
+    for mail in EMAIL.findall(raw[:3_000_000]):
+        if not EMAIL_JUNK.search(mail):
+            add_mark(m, "e-mail", mail.lower(), mail.rsplit("@", 1)[1].lower())
+
+
+def generated(name: str) -> bool:
+    """A parameter name no person chose: letters only, long, no words, a consonant run or few vowels (cskpopsybriyibc)."""
+    return (re.fullmatch(r"[a-z]{10,24}", name) is not None and not REAL_PARAM.search(name) and
+            (re.search(r"[^aeiou]{4}", name) is not None or sum(c in "aeiou" for c in name) < 0.3 * len(name)))
+
+
+def add_robots(m: Material, body: str):
+    """An unusual robots.txt, the same on many sites: one author. Empty, bare (Disallow: /) or a platform's default
+    say nothing about who wrote it."""
+    if re.search(r"<html|<!doctype", body[:500], re.I):
+        return
+    lines = [re.sub(r"#.*", "", x).strip().lower() for x in body.splitlines()]
+    lines = [x for x in lines if x and not x.startswith(("sitemap:", "host:"))]  # these name the site itself
+    rules = [x for x in lines if not x.startswith("user-agent:")]
+    if lines == ["user-agent: *", "disallow: /"] and "goły robots.txt" not in m.hints:
+        m.hints.append("goły robots.txt")
+    if len(rules) >= 3 and not PLATFORM_ROBOTS.search("\n".join(lines)):
+        add_mark(m, "robots.txt", "\n".join(lines), f"{len(rules)} reguł")
 
 
 def add_trackers(m: Material, raw: str):
@@ -298,9 +355,22 @@ def add_url(m: Material, url: str, landing: bool = False):
     target = m.landing if landing else m.domains
     if dom not in target:
         target.append(dom)
-    names = sorted({k.lower() for k, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True)})
+    query = parse_qsl(urlsplit(url).query, keep_blank_values=True)
+    names = sorted({k.lower() for k, _ in query})
+    tok = TOKEN_PATH.fullmatch(urlsplit(url).path)
+    if landing and tok and sum(bool(re.search(c, tok[1])) for c in ("[a-z]", "[A-Z]", "[0-9]")) >= 2:
+        if "token w linku" not in m.hints:
+            m.hints.append("token w linku")
+    if any(CYRILLIC.search(v) for _, v in query) and "cyrylica w linku" not in m.hints:
+        m.hints.append("cyrylica w linku")
     if landing and len(names) >= 3 and (scheme := ",".join(names)) not in m.params:
         m.params.append(scheme)
+    for name in filter(generated, names):
+        add_mark(m, "słowo w linku", name, f"{len(name)} liter")
+    # shortcut: one shop factory seen 22.11 (106:0); a general "same link shape" would also match every platform
+    if urlsplit(url).path.endswith("/index/detail.html") and "coll_id" in names and \
+            "GET /index/detail.html?coll_id" not in m.kit:
+        m.kit.append("GET /index/detail.html?coll_id")
     add_trackers(m, url)
 
 
@@ -325,6 +395,9 @@ def add_html(m: Material, raw: str, url: str | None = None, source: str = "stron
         if code := page.meta.get(key):
             m.trackers.append(f"weryfikacja domeny ({key.split('-')[0]}) {code[:40]}")
     add_trackers(m, raw)
+    add_emails(m, raw)  # mailto: links are in the HTML only
+    if "WYŁĄCZONY" in raw and "WYŁĄCZONY" not in m.hints:
+        m.hints.append("WYŁĄCZONY")
     m.title = m.title or html.unescape(page.title.strip())
     shown = " ".join([page.title, page.meta.get("og:site_name", ""), page.meta.get("og:title", "")] +
                      [a for a in page.assets if "logo" in a.lower()]).lower()
@@ -455,6 +528,8 @@ def from_files(m: Material, files: list[Path], root: Path) -> Material:
                 add_image(m, f, screenshot=not in_assets)
             elif ext in VIDEOS and not in_assets:
                 m.missing.append(f"{f.name}: wideo nie jest analizowane (tylko jego metadane i zrzuty)")
+            elif f.name.lower() == "robots.txt":
+                add_robots(m, f.read_text(encoding="utf-8", errors="replace"))
             elif ext == ".txt" and not in_assets:
                 add_text(m, f.read_text(encoding="utf-8", errors="replace"))
                 m.sources.append(f.name)
@@ -511,6 +586,12 @@ def fetch(m: Material, url: str):
         add_url(m, "https://" + host + "/", landing=True)
     m.ips.append(ip)
     add_html(m, raw, url=url, source=f"pobrana strona {chain[-1]}")
+    try:  # the final host's address was checked above; no redirects followed
+        with opener.open(urllib.request.Request(urljoin(url, "/robots.txt"), headers=req.headers), timeout=10) as res:
+            if res.headers.get_content_type() == "text/plain":
+                add_robots(m, res.read(65536).decode("utf-8", "replace"))
+    except Exception as e:
+        m.missing.append(f"robots.txt {chain[-1]}: brak ({e.__class__.__name__})")
 
 
 def rdap_age(domain: str) -> int | None:
@@ -585,13 +666,17 @@ def flags(m: Material) -> list[tuple[int, str]]:
         out.append((2, "Gra hazardowa w reklamie"))
     if any(t.startswith("piksel") for t in m.trackers) and m.claimed:
         out.append((1, "Strona udająca medium mierzy ruch z reklam pikselem"))
+    letters = len(re.findall(r"[^\W\d_]", m.text))  # a page really in Chinese uses its own colon
+    if "：" in m.text and re.search("[ąęłńśźż]", low) and len(re.findall(r"[一-鿿]", m.text)) < 0.1 * letters:
+        out.append((2, "Chiński dwukropek „：” w polskim tekście (pisane na chińskiej klawiaturze)"))
+    out += [HINTS[h] for h in m.hints if h in HINTS]
     return out
 
 
 def verdict(m: Material) -> tuple[str, int]:
     points = sum(p for p, _ in flags(m))
     return ("wysokie ryzyko: wygląda na oszustwo" if points >= 4 else "podejrzane" if points >= 2
-            else "brak wyraźnych sygnałów"), points
+            else "słaby sygnał" if points else "brak wyraźnych sygnałów"), points
 
 
 # ---------- comparing and grouping ----------
@@ -611,7 +696,8 @@ class Base:
         freq = Counter()
         for m in materials:
             freq.update({("d", d) for d in m.landing + m.domains} | {("a", a) for a in m.assets} |
-                        {("i", i) for i in m.ips} | {("k", x) for x in m.kit} | {("f", x) for x in m.files})
+                        {("i", i) for i in m.ips} | {("k", x) for x in m.kit} | {("f", x) for x in m.files} |
+                        {("m", x) for x in m.marks})
         many = max(3, math.ceil(0.4 * n))  # in 40% of all materials: a platform, not a campaign
         # the same API or file of a page's own is a platform only on many pages: in a small set it is the campaign itself
         self.common = ({k for k, c in freq.items() if c >= (max(SHARED_CODE, many) if k[0] in "kf" else many)}
@@ -667,7 +753,8 @@ class Base:
         pairs, index = set(self._cos), {}
         for i, m in enumerate(self.materials):
             keys = ({("d", x) for x in m.landing + m.domains} | {("a", x) for x in m.assets} |
-                    {("i", x) for x in m.ips} | {("k", x) for x in m.kit} | {("f", x) for x in m.files}) - self.common
+                    {("i", x) for x in m.ips} | {("k", x) for x in m.kit} | {("f", x) for x in m.files} |
+                    {("m", x) for x in m.marks}) - self.common
             keys |= ({("t", x) for x in m.trackers} | {("p", x) for x in m.params} |
                      {("o", x) for x in m.persons + m.claimed + m.topics})
             for key in keys:
@@ -713,7 +800,11 @@ class Base:
         # one path may be a common shop plugin, two of one API are the same backend
         if kit := rare("k", set(a.kit) & set(b.kit)):
             ev.append((min(0.8, 0.4 * len(kit)), "zestaw", "to samo API strony (zestaw): " + "; ".join(kit[:4])))
-        if len(a.shingles) >= 20 and len(b.shingles) >= 20 and (cp := self._jaccard("shingles", a, b)) >= 0.15:
+        same_marks = rare("m", set(a.marks) & set(b.marks))
+        for kind, strength in MARKS.items():
+            if found := [x for x in same_marks if x.startswith(kind + " ")]:
+                ev.append((strength, kind, f"wspólne ({kind}): " +", ".join(found[:4])))
+        if len(a.shingles) >= 20 and len(b.shingles) >= 20 and (cp :=self._jaccard("shingles", a, b)) >= 0.15:
             ev.append((min(0.95, 0.3 + cp), "tekst", f"{cp:.0%} wspólnych 5-wyrazowych fragmentów tekstu"))
         cos, words = self.narration(a, b)
         if cos >= 0.25:
