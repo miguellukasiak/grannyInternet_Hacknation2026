@@ -116,8 +116,9 @@ def twin(m, others):
     its page would not load (an empty copy). Such m gets no row of its own."""
     if not any(getattr(m, f) for f in EVIDENCE):
         return None
-    for x in others:
+    for x in others:  # the same first domain: a scam linking allegro.pl in passing holds no unloaded allegro.pl (22.11)
         if x.id != m.id and m.text in ("", x.text) and m.title in ("", x.title) and set(m.landing) <= set(x.landing) \
+                and (not m.landing or m.landing[0] == x.landing[0]) \
                 and all({json.dumps(i) for i in getattr(m, f)} <= {json.dumps(i) for i in getattr(x, f)}
                         for f in EVIDENCE if isinstance(getattr(m, f), list)):
             return x

@@ -501,6 +501,8 @@ class Paging(unittest.TestCase):
         self.assertIs(app.twin(empty, [old]), old)
         self.assertIsNone(app.twin(more, [old]))  # a new pixel is new evidence
         self.assertIsNone(app.twin(other, [old]))
+        scam = k.Material(id="app.store", name="app.store", landing=["app.store", "allegro.pl"])
+        self.assertIsNone(app.twin(k.Material(id="allegro.pl", name="allegro.pl", landing=["allegro.pl"]), [scam]))
         self.assertIsNone(app.twin(k.Material(id="n", name="n"), [old]))  # nothing read is no proof of anything
         self.assertIsNone(app.twin(old, [old]))
 
