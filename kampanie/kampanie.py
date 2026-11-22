@@ -265,13 +265,14 @@ class Page(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.text, self.links, self.assets, self.tags, self.inputs = [], set(), set(), [], set()
-        self.meta, self.title, self._skip, self._title = {}, "", 0, False
+        self.meta, self.title, self._skip, self._title, self._svg = {}, "", 0, False, 0
 
     def handle_starttag(self, tag, attrs):
         a = {k: v or "" for k, v in attrs}
         if tag in self.SKIP:
             self._skip += 1
-        self._title = tag == "title"
+        self._svg += tag == "svg"
+        self._title = tag == "title" and not self._svg  # an icon's <title> (Visa, BLIK on lovessy.com) is not the page's
         cls = ".".join(sorted(a.get("class", "").split())[:2])
         self.tags.append(tag + ("." + cls if cls else ""))
         if tag in ("a", "form", "area") and (href := a.get("href") or a.get("action")):
@@ -289,6 +290,8 @@ class Page(HTMLParser):
     def handle_endtag(self, tag):
         if tag in self.SKIP and self._skip:
             self._skip -= 1
+        if tag == "svg" and self._svg:
+            self._svg -= 1
         if tag == "title":
             self._title = False
 

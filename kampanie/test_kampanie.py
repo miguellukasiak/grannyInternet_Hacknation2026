@@ -427,7 +427,8 @@ class Paging(unittest.TestCase):
             asked.append(url)
             if "/products/" in url:
                 raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
-            k.add_html(m, "<html><title>Sklep</title><body>Sukienki</body></html>", url=url, source="pobrana strona")
+            k.add_html(m, "<html><title>Sklep</title><body>Sukienki<svg><title>Visa</title></svg>"
+                          "<svg><title>BLIK</title></svg></body></html>", url=url, source="pobrana strona")
         saved = app.k.fetch, app.k.look_up_ages
         app.k.fetch, app.k.look_up_ages = fake, lambda m: None
         try:
