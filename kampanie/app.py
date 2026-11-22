@@ -106,6 +106,22 @@ def idle():
             state["status"] = ""
 
 
+EVIDENCE = [f.name for f in fields(k.Material) if f.name not in ("id", "name", "origin", "sources", "missing", "ages")]
+
+
+def twin(m, others):
+    """A material that already holds everything m does: the same folder sent twice, or an address sent again when
+    its page would not load (an empty copy). Such m gets no row of its own."""
+    if not any(getattr(m, f) for f in EVIDENCE):
+        return None
+    for x in others:
+        if x.id != m.id and m.text in ("", x.text) and m.title in ("", x.title) and set(m.landing) <= set(x.landing) \
+                and all({json.dumps(i) for i in getattr(m, f)} <= {json.dumps(i) for i in getattr(x, f)}
+                        for f in EVIDENCE if isinstance(getattr(m, f), list)):
+            return x
+    return None
+
+
 def add_later(m):
     pending.append(m)
     state["status"] = "Przeliczam kampanie z nowymi materiałami"
@@ -332,7 +348,12 @@ def known(dom: str):
 def run_batch(form, entries, work_dir):
     try:
         with work:
-            new = ingest(form, entries, work_dir)
+            new, seen = [], [*state["base"].materials, *pending]
+            for m in ingest(form, entries, work_dir):
+                if old := twin(m, seen + new):
+                    state["error"] += f"{' ' if state['error'] else ''}{m.name}: już jest w bazie jako {old.name}, pominięty."
+                else:
+                    new.append(m)
             state["status"] = f"Grupuję {len(state['base'].materials) + len(new)} materiałów w kampanie"
             commit(state["base"].materials + new)  # once for the whole set: each regroup of the base takes seconds
     except Exception as err:
@@ -393,7 +414,7 @@ def page(title: str, body: str, here: str = "", refresh: bool = False) -> bytes:
 <body><a class="skip" href="#tresc">Przejdź do treści</a>{busy}
 <header class="wrap top"><a class="mark" href="/"><i></i>grannyInternet <span>/ kampanie</span></a>
 <nav aria-label="Główna">{nav("/#kampanie", "Kampanie", "k")}{nav("/#materialy", "Materiały", "m")}{nav("/graf", "Graf powiązań", "g")}
-{nav("/eksport.json", "Eksport JSON", "x")}<a href="https://grannyinternet.me/audytorzy/">Strona dla audytorów</a><a class="nav-cta" href="/#zglos">Zgłoś domenę</a></nav></header>
+{nav("/eksport.json", "Eksport JSON", "x")}<a href="https://grannyinternet.me/audytorzy/">Strona dla audytorów</a><a class="nav-cta" href="/#dodaj">Zgłoś stronę</a></nav></header>
 <main id="tresc">{body}</main>
 <footer class="foot"><div class="wrap"><div class="foot-row"><a class="mark" href="/"><i></i>grannyInternet</a>
 <span>Wynik to wstępna ocena z przesłankami, nie wyrok. Decyzję podejmuje człowiek.</span></div>
@@ -1001,6 +1022,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.go("/#kampanie")
             m = ingest(form, entries, work_dir)[0]
             state["status"] = ""
+            if keep and (old := twin(m, [*state["base"].materials, *pending])):
+                return self.result(m, f"Ten materiał już jest w bazie jako {mlink(old.id, '')}, więc nie zapisaliśmy go "
+                                      "drugi raz. Poniżej jego ocena.")
             if keep:
                 add_later(m)
             # shortcut: placed against the base without it, so its narration (TF-IDF) does not count; enough to place one

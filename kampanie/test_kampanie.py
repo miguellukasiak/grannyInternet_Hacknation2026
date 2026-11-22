@@ -427,6 +427,22 @@ class Paging(unittest.TestCase):
         k.look_up_ages(m)  # no network in the test: a lookup would leave a note
         self.assertEqual((m.ages, m.missing), ({}, []))
 
+    def test_twin_is_a_material_sent_again(self):
+        import app
+        old = k.Material(id="a", name="a", text="tylko dziś", landing=["x.pl"], trackers=["piksel Meta 1"],
+                         images=[["ff00", "a.png"]], sources=["a.html"])
+        same = k.Material(id="a-2", name="a", text="tylko dziś", landing=["x.pl"], trackers=["piksel Meta 1"],
+                          images=[("ff00", "a.png")], sources=["a.html"])  # fresh analysis: tuples, not JSON lists
+        empty = k.Material(id="x.pl-2", name="x.pl", landing=["x.pl"])  # the page would not load the second time
+        more = k.Material(id="a-3", name="a", text="tylko dziś", landing=["x.pl"], trackers=["piksel Meta 1", "piksel Meta 2"])
+        other = k.Material(id="b", name="b", text="inny tekst", landing=["x.pl"])
+        self.assertIs(app.twin(same, [old]), old)
+        self.assertIs(app.twin(empty, [old]), old)
+        self.assertIsNone(app.twin(more, [old]))  # a new pixel is new evidence
+        self.assertIsNone(app.twin(other, [old]))
+        self.assertIsNone(app.twin(k.Material(id="n", name="n"), [old]))  # nothing read is no proof of anything
+        self.assertIsNone(app.twin(old, [old]))
+
     def test_form_answers_with_redirect(self):
         import app, http.client, threading
         from http.server import ThreadingHTTPServer
