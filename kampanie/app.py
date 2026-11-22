@@ -63,7 +63,7 @@ work = threading.Lock()  # one writer at a time: uploads and deletes
 state = {"base": k.Base([]), "campaigns": [], "status": "", "error": ""}
 pending = deque()  # materials waiting to join the base: grouping ~2000 again takes minutes on the server
 results = OrderedDict()  # token -> (material, note): a POST answers with a redirect here, so Back never re-sends a form
-PER_CAMPS, PER_ROWS, PER_GRAPH = 20, 50, 12  # one page of each list: all of them at once were 1.5 MB and 18 s
+PER_CAMPS, PER_ROWS, PER_GRAPH = 2, 5, 12  # one page of each list: a campaign card is long, so two at a time; all at once were 1.5 MB and 18 s
 
 
 def save(materials):
